@@ -4,7 +4,7 @@ Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished e
 
 ## Milestone 1: prove the central behavior
 
-- [ ] HOST-01: deploy the portable Next.js/Sharp/FFmpeg container to Render and connect the native API origin. Render is selected; Linux ARM64 build/smoke and all 64 live integration assertions pass locally. AMD64 build/smoke pass under emulation. Public-host and native-origin evidence remain pending on the board.
+- [ ] HOST-01: deploy the portable Next.js/Sharp/FFmpeg container to Render and connect the native API origin. Render is selected; source is published and GitHub's full checks/native AMD64 container build/smoke pass. Linux ARM64 and all 64 live Supabase assertions also pass locally. User deferred paid provisioning; no Peekalo Render service exists. Public-host and native-origin evidence remain pending on the board.
 - [ ] Bound upload admission before body buffering, add upload read deadlines and recover stale `uploading` reservations after process interruption before inviting users.
 - [x] Implement PHOTO-01 local fixture reveal on mobile/web: hold/release/cancel, cumulative ten-second allowance, countdown/exhaustion, keyboard and one-second accessible alternative. Runtime-only demo; server/device criteria below remain separate.
 
