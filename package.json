@@ -1,0 +1,34 @@
+{
+  "name": "peekalo",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24.14.1 <25",
+    "pnpm": ">=11.25.0 <12"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @peekalo/web dev",
+    "dev:mobile": "pnpm --filter @peekalo/mobile start",
+    "ios": "node scripts/run-native.mjs ios",
+    "android": "node scripts/run-native.mjs android",
+    "lint": "pnpm -r lint && eslint scripts",
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm --filter @peekalo/web build",
+    "export:mobile": "pnpm --filter @peekalo/mobile export",
+    "test:mobile": "pnpm --filter @peekalo/mobile test",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:mobile && pnpm test:reveal && pnpm test:backend && pnpm test:hosting && pnpm build && pnpm export:mobile",
+    "test:hosting": "node --test scripts/test-hosting-runtime.mjs",
+    "test:reveal": "pnpm --filter @peekalo/reveal test",
+    "test:sharing": "node --env-file=apps/web/.env.local scripts/test-sharing-backend.mjs",
+    "test:backend": "node --test scripts/test-backend-ledger.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "embedded-postgres": "15.18.0-beta.17",
+    "eslint": "10.12.0",
+    "pg": "8.23.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.2"
+  }
+}

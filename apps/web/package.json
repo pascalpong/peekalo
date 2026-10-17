@@ -1,0 +1,29 @@
+{
+  "name": "@peekalo/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint . --max-warnings=0"
+  },
+  "dependencies": {
+    "@peekalo/contracts": "workspace:*",
+    "@peekalo/reveal": "workspace:*",
+    "@supabase/supabase-js": "2.117.3",
+    "next": "16.4.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "16.4.1",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.3",
+    "eslint": "10.12.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,25 @@
+# Only application/build inputs enter the build context.
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!patches/
+!patches/**
+!apps/
+!apps/web/
+!apps/web/**
+!packages/
+!packages/contracts/
+!packages/contracts/**
+!packages/reveal/
+!packages/reveal/**
+!scripts/
+!scripts/check-hosting-runtime.mjs
+**/node_modules
+**/.next
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/*.log
+**/.DS_Store

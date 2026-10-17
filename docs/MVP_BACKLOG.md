@@ -1,0 +1,122 @@
+# Peekalo MVP implementation backlog
+
+Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished even when part of a shell exists. Product rules and sources live in [the plan](PEEKALO_PLAN.md); execution order and actual verification live in [the build board](BUILD_BOARD.md). The mobile/web foundation is complete with iOS simulator and physical Android startup verified. Local photo/video shutter, review, Retake and Discard are implemented. The user confirms matching preview/photo framing and hold/release video recording with playback on Samsung; earlier photo capture and Retake are also confirmed. Duration, audio, lifecycle/permission, front-camera and physical iOS evidence remain pending. A local prototype does not complete the server/security/device checks below.
+
+## Milestone 1: prove the central behavior
+
+- [ ] HOST-01: deploy the portable Next.js/Sharp/FFmpeg container to Render and connect the native API origin. Render is selected; Linux ARM64 build/smoke and all 64 live integration assertions pass locally. AMD64 build/smoke pass under emulation. Public-host and native-origin evidence remain pending on the board.
+- [ ] Bound upload admission before body buffering, add upload read deadlines and recover stale `uploading` reservations after process interruption before inviting users.
+- [x] Implement PHOTO-01 local fixture reveal on mobile/web: hold/release/cancel, cumulative ten-second allowance, countdown/exhaustion, keyboard and one-second accessible alternative. Runtime-only demo; server/device criteria below remain separate.
+
+- [ ] Interpret the three-upload limit. Anonymous globally single-use links and chosen-account native sharing are confirmed.
+- [ ] Set up Expo development builds and the restricted web viewer using sample media.
+- [ ] Complete physical verification of default Camera, tap-to-photo and hold/release video with automatic stop at ten seconds. Samsung photo framing and video recording/playback are user-confirmed; exact duration, audio and physical iOS checks remain pending.
+- [x] Implement local photo/video capture, review, Retake/Discard and app-cache drafts. Tap takes a photo; a 300 ms hold starts video, release stops it, and native `maxDuration` plus a JavaScript fallback stop at ten seconds. Video review has play/pause.
+- [x] Implement first-use microphone permission on hold, followed by a new hold to record after permission is granted. Denial/recovery still needs physical verification.
+- [x] Implement consistent centered portrait 9:16 preview/review framing and photo cropping, with dark extra space on taller screens. Fixed top logo and center navigation button remain.
+- [x] Pass 31 local tests: ten photo-session, fourteen video-session and seven framing tests; mobile lint and TypeScript pass. This is local implementation evidence.
+- [ ] Complete photo/video Retake/Discard, front-camera and lifecycle verification on physical Android and iOS, including leaving the screen or backgrounding during preparation, capture, recording and review; stale results must not reopen review. Confirm best-effort cache cleanup and document failures without claiming byte erasure.
+- [ ] Complete consistent 9:16 framing and fixed-logo verification on physical devices (Samsung preview/photo framing confirmed); use difference blend only where reliable, with a readable fallback. Physical iOS evidence remains pending.
+- [ ] Bottom navigation: Inbox left, prominent Camera button in the center, Profile right; tapping Camera opens the in-app camera.
+- [ ] Allow sharing only from in-app captures; no gallery, photo-library or file import actions or permissions.
+- [ ] Review/retake/discard capture, then select recipient accounts or create a single-use link. Photo/video review actions are implemented locally; real recipient/link actions remain planned.
+- [ ] Handle camera/microphone denial and recording interruptions; do not send partial captures or auto-save to the photo library.
+- [x] Implement a server ledger per account-or-guest identity/post with a 10,000 ms maximum allowance. All four migrations are deployed to the dedicated development project; the disposable PostgreSQL suite and 64 live HTTP/Auth/Storage assertions pass under SUPABASE-01.
+- [x] Prototype atomic, idempotent leases and conservative accounting across holds/devices. PostgreSQL tests cover single-winner claims, access-path retry scope, competing sessions, exhaustion and revoke/expiry lock races; physical-device behavior remains separate.
+- [ ] Test press, hold, release, cancellation, expiry, keyboard/screen-reader interaction and visible countdown.
+- [ ] Test a photo and a <=10-second video; stop both video and audio when hidden.
+- [ ] Verify clear media never appears before protection and authorization are ready.
+- [ ] Measure first-load overhead and latency; choose lease granularity and wording.
+- [ ] Verify Android OS screenshot/recording behavior on a physical device.
+- [ ] Verify the selected Expo/iOS package on a physical iPhone in a release build.
+- [ ] Record limitations and product wording; web is capturable after reveal.
+
+Acceptance examples:
+
+| Scenario | Required result |
+| --- | --- |
+| Tap the shutter | Capture a photo and review the same centered 9:16 composition shown in preview. |
+| Hold the shutter for 300 ms, then release | Record video while held, stop on release and open local video review with play/pause. |
+| First video hold needs microphone permission | Request access, then require a new hold to record; never begin recording after the original gesture ends. |
+| Hold the shutter beyond ten seconds | Native duration cap and JavaScript fallback stop recording; verify actual file duration on device. |
+| Navigate away or background during photo capture or video preparation/recording | Stop/cancel recording, do not reopen review with a late result and attempt temporary-file cleanup. |
+| Retake/discard a local photo or video | Clear the draft and attempt app-cache file deletion; do not save to the photo library. |
+| Hold for about 2 seconds, release, hold again | Continue from the authoritative remaining allowance; no new 10-second grant. |
+| Hold a web card, then release | Show media in a full-viewport overlay while revealed; return to the same blurred card and scroll position on release, retaining the remaining allowance. |
+| Reload/reinstall/open another device in the app | Same account/post balance. |
+| Reload guest web viewer | Same guest/post balance while the cookie persists. |
+| Clear cookies / use another browser | Cannot reclaim the used link; original guest loses resumption if its cookie is lost. |
+| Two visitors hold an unclaimed link simultaneously | One atomic claim succeeds; the other visitor is denied. |
+| Open in app after guest web claim | Cannot reclaim/transfer that link in v1; separately granted native access remains separate. |
+| Two devices reveal simultaneously | One active session; total granted time cannot exceed 10,000 ms. |
+| Retry the same lease request | Same result; no duplicate charge or grant. |
+| Lose network, kill app, or miss release | Cover at lease expiry; no automatic refund that mints extra time. |
+| Clock changes | Local wall-clock changes do not extend the reveal. |
+| GET link / social unfurl | Safe preview only; no budget consumed. |
+| Exhausted budget through a second share link | Still exhausted for that account/post. |
+| Malicious viewer saves already received bytes | Documented platform limitation; never presented as prevented by the timer. |
+
+## Milestone 2: private upload and sharing
+
+Development implementation includes authenticated private upload/normalization, protected links, accepted recipient grants, a transactional cumulative ledger and owner revocation. SUPABASE-01 applies all four migrations and passes 64 live backend assertions with generated fixtures through the local production gateway. Unchecked end-to-end/beta criteria below still require their full acceptance evidence; general signup email, durable public API hosting and physical native sharing are pending.
+
+- [ ] Native email verification, recovery and username/profile; server-issued anonymous web cookie, no guest login requirement.
+- [ ] Reserve upload slots atomically; enforce the selected three-item policy.
+- [ ] Native camera capture only, private staging upload of those captures and safe progress/retry states; no gallery, photo-library or file imports.
+- [ ] Trusted type/size/dimensions/duration checks and resource-limited processing.
+- [ ] Normalized media, metadata removal, separate heavily blurred preview/poster.
+- [ ] Failed-job cleanup, retry idempotency, moderation-before-publish state.
+- [ ] Capture-to-share progress: recipient delivery or usable link only after processing/moderation succeeds.
+- [ ] Private clear-media delivery; no unrestricted recipient/guest read policy on storage.
+- [ ] Explicit owner-created post-recipient grants; no native forwarding of reveal rights.
+- [ ] Expiring/revocable hashed share tokens, atomic single-viewer claims and explicit web-sharing disclosure.
+- [ ] Claimed/exhausted/expired/revoked state handling; retries cannot reopen a consumed link.
+- [ ] Universal Links / App Links on an actual domain with release association files.
+- [ ] No clear media in public HTML, social cards, thumbnails, logs or notifications.
+
+Meaningful backend/security checks:
+
+- [x] Run actual migrations and populated request-key backfill in disposable local PostgreSQL without remote credentials; include claims, grants, budgets, configured quota, permissions and deterministic lock-contention regressions in `pnpm check`.
+- [x] Verify canonical and alias link-creation request keys keep their original revoked result after replacement; a retry cannot mint a fresh claim. Historical alias keys preceding migration 004 were never stored.
+- [ ] Two simultaneous uploads cannot create a fourth reserved/published post.
+- [ ] A forged MIME type or over-ten-second video is rejected server-side.
+- [ ] Guessing post IDs or storage paths cannot reveal media.
+- [ ] User A cannot read User B's private settings, budgets or messages.
+- [ ] New media/range requests fail after lease expiry, link revocation or takedown.
+- [ ] Revocation does not claim to erase bytes already delivered.
+- [ ] Owner previews are scoped to the owner; client-supplied IDs cannot grant exemption.
+- [ ] Pending or declined direct-share requests cannot reveal via API, even when a recipient grant row already exists.
+- [ ] Replacing clear media cannot silently reuse the old post's identity/ledger.
+
+## Milestone 3: minimal social features
+
+- [ ] Username lookup, chosen-recipient sharing and chronological “Shared with you” list in Inbox.
+- [ ] Profile with maximum three active blurred media cards.
+- [ ] Flat comments; author deletion, post-owner removal, reports and rate limits.
+- [ ] 1:1 conversations with first-sender accept/decline, text messages and owner-sent existing-post references.
+- [ ] Durable storage, private realtime update signals and authorized data fetches.
+- [ ] No chat attachment path that bypasses the media/post policy.
+- [ ] Block enforcement for identified accounts across feed, direct reveals, comments, chat and existing realtime sessions; state anonymous-link limitation.
+- [ ] Generic push notifications only after core chat works.
+- [ ] Empty, loading, processing, failed, expired, revoked and exhausted states.
+
+## Milestone 4: beta and release
+
+- [ ] Filtering/moderation queue, restricted operator access and published contact.
+- [ ] Report post/comment/message/user; responses and takedowns actually work.
+- [ ] Terms acceptance, privacy/terms/support pages, age and country decisions.
+- [ ] In-app deletion and external deletion request route; cleanup and retention policy.
+- [ ] App Privacy/Data safety disclosures match the app and installed SDKs.
+- [ ] Check current social-app child-safety and store requirements for the selected audience.
+- [ ] Physical-device tests: recording started before reveal and during it, mirroring/sharing, screenshot shortcuts, interruptions, Control Center, app switcher, orientation, navigation and repeated mounts.
+- [ ] Camera/microphone permission-denied tests; no photo-library access requested for the capture-only sharing flow.
+- [ ] Clear-media cache/storage checks, telemetry redaction, no protected-screen session replay.
+- [ ] Separate staging/production, migration rollback, backup/restore and failed-worker recovery.
+- [ ] Alerts for crashes, worker failures, abnormal link traffic and spending.
+- [ ] Signed release builds and reviewer/test accounts with non-sensitive sample media.
+- [ ] TestFlight / Play test tracks; recruit Play closed testers if applicable.
+- [ ] Recheck privacy mitigations after native SDK updates and before each release.
+
+## Deferred work
+
+Followers, group chat, calls, chat media attachments, Stories/Reels, algorithmic discovery, likes/bookmarks, editing/filter tools, video trimming editor, payments, DRM, E2EE, recipient-restricted external links, post-claim browser/app handoff, watermarking, human identity verification, full web social features, and custom development skills.

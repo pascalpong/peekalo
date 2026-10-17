@@ -1,0 +1,56 @@
+{
+  "name": "@peekalo/mobile",
+  "version": "0.1.0",
+  "main": "expo-router/entry",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-camera"
+        ]
+      }
+    }
+  },
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "export": "expo export --platform ios --platform android",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src plugins --max-warnings=0"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "15.1.1",
+    "@peekalo/contracts": "workspace:*",
+    "@peekalo/reveal": "workspace:*",
+    "@supabase/supabase-js": "2.117.3",
+    "expo": "55.0.31",
+    "expo-build-properties": "55.0.18",
+    "expo-camera": "55.0.23",
+    "expo-constants": "55.0.17",
+    "expo-crypto": "55.0.19",
+    "expo-dev-client": "55.0.40",
+    "expo-device": "55.0.21",
+    "expo-file-system": "55.0.26",
+    "expo-font": "55.0.8",
+    "expo-image-manipulator": "55.0.21",
+    "expo-linking": "55.0.17",
+    "expo-router": "55.0.18",
+    "expo-screen-capture": "55.0.18",
+    "expo-secure-store": "55.0.18",
+    "expo-status-bar": "55.0.6",
+    "expo-video": "55.0.21",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.10",
+    "react-native-safe-area-context": "5.6.2",
+    "react-native-screens": "4.23.0",
+    "react-native-url-polyfill": "4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "typescript": "5.9.3"
+  },
+  "private": true
+}

@@ -1,0 +1,25 @@
+# Deployment proposal only. Creating this service incurs the selected plan's cost.
+# Confirm the plan in Render before applying; no credentials belong in this file.
+services:
+  - type: web
+    name: peekalo-dev
+    runtime: docker
+    region: singapore
+    plan: 1c-2g
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    maxShutdownDelaySeconds: 120
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SHARE_TOKEN_SECRET
+        sync: false
+      - key: PUBLIC_APP_URL
+        sync: false

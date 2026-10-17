@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Peekalo",
+    "slug": "peekalo",
+    "scheme": "peekalo",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.peekalo.preview"
+    },
+    "android": {
+      "package": "com.peekalo.preview",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#D9F69D"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "./plugins/withQuotedBundleScript.cjs",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Peekalo to capture photos and videos with your camera.",
+          "recordAudioAndroid": true,
+          "microphonePermission": "Allow Peekalo to record sound when you hold to capture a video."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "buildReactNativeFromSource": true
+          }
+        }
+      ],
+      "expo-video",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

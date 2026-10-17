@@ -1,0 +1,14 @@
+{
+  "name": "@peekalo/reveal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/local-reveal.ts" },
+  "types": "./src/local-reveal.ts",
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": { "typescript": "5.9.3" }
+}

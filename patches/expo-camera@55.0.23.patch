@@ -1,0 +1,13 @@
+diff --git a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+index 1ff8116fb7c756add1d15dd4de950f890b179859..33017a1d8616a19b95a5b2cc0c43014300beefc0 100644
+--- a/android/src/main/java/expo/modules/camera/ExpoCameraView.kt	
++++ b/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+@@ -133,6 +133,8 @@ class ExpoCameraView(
+ 
+   private var previewView = PreviewView(context).apply {
+     elevation = 0f
++    // Compose the full-screen preview with React Native overlays in the same layer.
++    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+   }
+   private val scope = CoroutineScope(Dispatchers.Main)
+   private var shouldCreateCamera = false

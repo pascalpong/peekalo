@@ -1,0 +1,25 @@
+<!-- Original non-sensitive demo illustration. Never a user capture. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+  <defs>
+    <linearGradient id="wall" x2="1" y2="1"><stop stop-color="#edd6b9"/><stop offset="1" stop-color="#c4a58c"/></linearGradient>
+    <linearGradient id="cup" x2="1"><stop stop-color="#e9efca"/><stop offset=".5" stop-color="#faf7df"/><stop offset="1" stop-color="#c7d3a8"/></linearGradient>
+    <radialGradient id="shadow"><stop stop-color="#584b3c" stop-opacity=".28"/><stop offset="1" stop-color="#584b3c" stop-opacity="0"/></radialGradient>
+  </defs>
+  <path fill="url(#wall)" d="M0 0h720v1280H0z"/>
+  <path fill="#f6e8cf" opacity=".5" d="M0 75h195v680H0zM210 75h245v680H210z"/>
+  <path fill="#edd8bb" d="M0 810h720v470H0z"/>
+  <path fill="#c2ac90" opacity=".5" d="M0 810h720v5H0z"/>
+  <ellipse cx="365" cy="1060" rx="292" ry="95" fill="url(#shadow)"/>
+  <path d="M570 875c-10-175-18-283-48-398" stroke="#4c6743" stroke-width="8" fill="none"/>
+  <path d="M548 642c-85-8-103-68-87-102 61 11 93 39 87 102M531 536c25-80 70-115 106-93-2 65-41 99-106 93M562 741c31-61 83-80 110-52-19 51-57 69-110 52" fill="#687f50"/>
+  <path d="M508 824h119l-12 183q-46 27-94 0z" fill="#a7684b"/>
+  <ellipse cx="568" cy="824" rx="60" ry="16" fill="#84593f"/>
+  <path d="M390 847c126-25 131 156 9 132" stroke="#cad5ae" stroke-width="36" fill="none"/>
+  <path d="M175 804h245l-13 216q-113 64-217 0z" fill="url(#cup)"/>
+  <ellipse cx="298" cy="804" rx="123" ry="29" fill="#f6f2d9"/>
+  <ellipse cx="298" cy="806" rx="104" ry="18" fill="#846044"/>
+  <path d="M262 691c-27-43 30-56 6-99M318 696c-29-40 28-65 10-101" stroke="#f8eddb" stroke-width="9" stroke-linecap="round" fill="none" opacity=".6"/>
+  <circle cx="111" cy="1038" r="49" fill="#d58c46"/>
+  <path d="M109 994q7-27 29-18-5 21-29 18" fill="#687c44"/>
+  <path d="M90 1023q-12 20-5 37" stroke="#e8aa62" stroke-width="7" stroke-linecap="round" fill="none"/>
+</svg>
