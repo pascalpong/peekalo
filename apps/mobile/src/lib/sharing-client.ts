@@ -110,6 +110,7 @@ export function getSharingClient(): Promise<SupabaseClient> {
       try { response = await requestWithTimeout(resolveApiUrl('/api/shares/config'), { cache: 'no-store' }, 20_000); }
       catch (error) {
         if (error instanceof SharingError) throw error;
+        if (__DEV__) console.warn('[sharing] config request failed', process.env.EXPO_PUBLIC_API_URL, String(error));
         throw new SharingError('Cannot reach Peekalo. Check your connection and try again.');
       }
       if (!response.ok) throw new SharingError('Sharing is not available right now. Please try again.');
@@ -177,6 +178,7 @@ export async function apiRequest<T>(path: string, options: {
   } catch (error) {
     if (options.signal?.aborted) throw new SharingError('The request was cancelled.', 'cancelled');
     if (error instanceof SharingError) throw error;
+    if (__DEV__) console.warn('[sharing] API request failed', path, String(error));
     throw new SharingError('Cannot reach Peekalo. Check your connection and try again.');
   }
   const result = await response.json().catch(() => null);
