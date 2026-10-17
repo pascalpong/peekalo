@@ -2,6 +2,7 @@ import 'react-native-url-polyfill/auto';
 import { createClient, processLock, type SupabaseClient } from '@supabase/supabase-js';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
 import { AppState } from 'react-native';
 
 export class SharingError extends Error {
@@ -91,6 +92,7 @@ const sessionStorage = {
 };
 
 let clientPromise: Promise<SupabaseClient> | undefined;
+let authConfig: { supabaseUrl: string; supabaseAnonKey: string } | undefined;
 
 async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
@@ -118,8 +120,10 @@ export function getSharingClient(): Promise<SupabaseClient> {
       if (!config.ready || !config.supabaseUrl || !config.supabaseAnonKey || config.supabaseAnonKey.startsWith('sb_secret_')) {
         throw new SharingError('Sharing is not connected yet. Please try again after the server is configured.', 'not_configured');
       }
+      authConfig = { supabaseUrl: config.supabaseUrl, supabaseAnonKey: config.supabaseAnonKey };
+      // PKCE keeps OAuth tokens out of the redirect URL; the verifier stays in secure storage.
       const client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
-        auth: { storage: sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, lock: processLock },
+        auth: { storage: sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, flowType: 'pkce', lock: processLock },
       });
       if (AppState.currentState === 'active') client.auth.startAutoRefresh();
       else client.auth.stopAutoRefresh();
@@ -131,6 +135,41 @@ export function getSharingClient(): Promise<SupabaseClient> {
     })().catch(error => { clientPromise = undefined; throw error; });
   }
   return clientPromise;
+}
+
+// Must match an entry in Supabase Auth > URL Configuration > Redirect URLs.
+export const authRedirectUrl = 'peekalo://auth-callback';
+
+async function providerEnabled(provider: 'google') {
+  if (!authConfig) return false;
+  try {
+    const response = await requestWithTimeout(`${authConfig.supabaseUrl}/auth/v1/settings`, { headers: { apikey: authConfig.supabaseAnonKey }, cache: 'no-store' }, 15_000);
+    if (!response.ok) return false;
+    const settings = await response.json() as { external?: Record<string, boolean> };
+    return settings.external?.[provider] === true;
+  } catch { return false; }
+}
+
+/** Returns false when the person closes the Google sheet without signing in. */
+export async function signInWithGoogle(): Promise<boolean> {
+  const client = await getSharingClient();
+  if (!await providerEnabled('google')) throw new SharingError('Google sign-in is not set up yet. Use email for now.', 'not_configured');
+  const { data, error } = await client.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: authRedirectUrl, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+  });
+  if (error || !data.url) throw new SharingError('Google sign-in could not start. Please try again.');
+  const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUrl);
+  if (result.type !== 'success') return false;
+  const params = new URL(result.url).searchParams;
+  const code = params.get('code');
+  if (!code) {
+    if (__DEV__) console.warn('[sharing] Google sign-in returned', params.get('error'), params.get('error_description'));
+    throw new SharingError('Google sign-in did not finish. Please try again.');
+  }
+  const { error: exchangeError } = await client.auth.exchangeCodeForSession(code);
+  if (exchangeError) throw new SharingError('Google sign-in did not finish. Please try again.');
+  return true;
 }
 
 const errorMessages: Record<string, string> = {

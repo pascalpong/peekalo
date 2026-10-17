@@ -25,6 +25,7 @@ Updated 17 October 2026. Human decisions take precedence over proposed defaults.
 
 | D-17 | Capture review includes a working Share action for protected Peekalo links and chosen recipients | Confirmed instead of exporting originals through the phone share sheet. A separate Peekalo Supabase project is authorized; recipient requests must be accepted before reveal. |
 | D-18 | Web hold-to-reveal opens a full-viewport media overlay; release returns to the same blurred card | Keep the page position and existing allowance. Apply to the sample and protected photo/video viewer; opening the overlay does not grant fresh viewing time. |
+| D-19 | Native accounts can sign in with Google as well as email | Requested 17 October. Uses Supabase Google OAuth (PKCE) through the in-app browser sheet and the `peekalo://auth-callback` redirect. Google accounts arrive with a verified email, so they do not depend on the pending signup email provider. Invites are not decided yet. |
 
 ## Adopted engineering direction
 

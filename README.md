@@ -128,6 +128,16 @@ Supabase’s default email service sends confirmations only to project-team addr
 
 The server prepays two-second viewing slices, allows renewal near expiry and caps cumulative grants at ten seconds per identity/post. Interrupted prepaid time is charged. Opaque previews never download originals; authorized media passes through a private no-store gateway. These controls cannot erase delivered bytes or guarantee capture prevention. The three-active-post proposal is not enforced until its meaning is confirmed; `PEEKALO_ACTIVE_POST_LIMIT` is an explicit optional server setting.
 
+### Google sign-in
+
+The account panel offers **Continue with Google** (Supabase OAuth with PKCE in the in-app browser sheet). It stays disabled with a clear message until the provider is configured:
+
+1. In Google Cloud Console → APIs & Services → Credentials, create an **OAuth client ID** of type **Web application**. Add the authorized redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`. Configure the OAuth consent screen (app name, support email, scopes `email`, `profile`, `openid`).
+2. In Supabase → Authentication → Sign In / Providers → **Google**, enable it and paste that client ID and secret. Keep the secret out of the repository.
+3. In Supabase → Authentication → URL Configuration → **Redirect URLs**, add `peekalo://auth-callback`.
+
+Adding `expo-web-browser` requires a native rebuild (`pnpm android --device` / `pnpm ios`); Metro refresh alone is not enough. `supabase/config.toml` mirrors these settings for a local Supabase stack using `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET`.
+
 ## Container hosting — HOST-01
 
 The root `Dockerfile` packages the web/API into one Node 24.14.1 container with Sharp, FFmpeg/FFprobe, H.264/AAC encoders and an unprivileged server process. Next.js standalone output includes the workspace dependencies, static chunks and public demo fixtures. Build from the repository root; `.dockerignore` excludes environment files, native projects, caches and unrelated workspace inputs. Supply backend credentials only at runtime. No persistent capture disk is required; media remains in private Supabase Storage.

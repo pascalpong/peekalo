@@ -1,8 +1,9 @@
+import AntDesign from '@expo/vector-icons/AntDesign';
 import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest, getSharingClient, newIdempotencyKey, SharingError } from '../lib/sharing-client';
+import { apiRequest, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle } from '../lib/sharing-client';
 import { colors, Eyes } from './ui';
 
 type Props = {
@@ -106,6 +107,13 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
         return;
       }
       await loadAccount(current);
+    });
+  }
+
+  function continueWithGoogle() {
+    void run(async current => {
+      const signedIn = await signInWithGoogle();
+      if (signedIn && current()) await loadAccount(current);
     });
   }
 
@@ -214,6 +222,10 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
           {stage === 'unavailable' && <Action label="Try connection again" onPress={connect} disabled={busy} />}
           {stage === 'auth' && <View style={styles.section}>
             <Text style={styles.heading}>{signingUp ? 'Create your account' : capture ? 'Sign in to share' : 'Sign in to Peekalo'}</Text>
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={continueWithGoogle} style={({ pressed }) => [styles.google, (pressed || busy) && styles.dim]}>
+              <AntDesign name="google" size={20} color={colors.ink} /><Text style={styles.actionText}>Continue with Google</Text>
+            </Pressable>
+            <Text style={styles.divider}>or use email</Text>
             <TextInput style={styles.input} accessibilityLabel="Email" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" autoComplete="email" editable={!busy} />
             <TextInput style={styles.input} accessibilityLabel="Password" placeholder={signingUp ? 'Password (at least 8 characters)' : 'Password'} placeholderTextColor={colors.muted} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete={signingUp ? 'new-password' : 'current-password'} editable={!busy} />
             <Action label={signingUp ? 'Create account' : 'Sign in'} onPress={authenticate} disabled={busy || !email.trim() || password.length < (signingUp ? 8 : 1)} />
@@ -236,7 +248,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
               <TextInput style={styles.input} accessibilityLabel="Recipient username" placeholder="@username" placeholderTextColor={colors.muted} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} maxLength={25} editable={!busy} />
               {lastRecipient && <Action secondary label={`Revoke @${lastRecipient} access`} onPress={revokeRecipient} disabled={busy} />}
               <Action label="Send to recipient" onPress={sendToRecipient} disabled={busy || !recipient.trim()} secondary />
-            </View></> : <View style={styles.option}><Text style={styles.heading}>You’re ready, @{username}.</Text><Text style={styles.body}>Return to Inbox to see moments shared with you.</Text><Action label="Back to Inbox" onPress={close} disabled={busy} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></View>}
+            </View></> : <View style={styles.option}><Text style={styles.heading}>You’re ready, @{username}.</Text><Text style={styles.body}>Moments shared with you appear in Inbox.</Text><Action label="Done" onPress={close} disabled={busy} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></View>}
           </View>}
           {busy && stage !== 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.ink} /><Text accessibilityLiveRegion="polite" style={styles.body}>{progress || 'Please wait…'}</Text></View>}
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
@@ -262,6 +274,8 @@ const styles = StyleSheet.create({
   input: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 14, minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, color: colors.ink, fontSize: 16 },
   action: { minHeight: 54, borderRadius: 28, backgroundColor: colors.lime, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   actionText: { color: colors.ink, fontSize: 14, fontWeight: '600', flexShrink: 1 }, secondary: { backgroundColor: colors.soft }, dim: { opacity: 0.5 },
+  google: { minHeight: 54, borderRadius: 28, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
+  divider: { color: colors.muted, fontSize: 12, textAlign: 'center' },
   loading: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }, textButton: { paddingVertical: 10 }, textButtonLabel: { textAlign: 'center', color: colors.ink, fontSize: 13 },
   error: { color: '#A2382D', lineHeight: 22, fontSize: 14, backgroundColor: '#F8EBE7', padding: 16, borderRadius: 14 }, notice: { color: colors.ink, lineHeight: 22, fontSize: 14, backgroundColor: colors.soft, padding: 16, borderRadius: 14 },
 });

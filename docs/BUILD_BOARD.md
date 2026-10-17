@@ -96,6 +96,13 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
+### AUTH-01: Google sign-in — 17 October (implemented; provider setup pending)
+
+- The share/account panel has **Continue with Google** above the email form. It uses Supabase OAuth with PKCE through `expo-web-browser@55.0.20`, redirecting to `peekalo://auth-callback`; `src/app/+native-intent.tsx` stops Expo Router from opening that redirect as a screen, so the capture being shared is kept. New Google accounts continue to the existing username step.
+- Before opening Google, the app reads the project's public auth settings and shows “Google sign-in is not set up yet” when the provider is off. As of this entry the hosted project reports `google: false`; a Google Cloud OAuth client and the Supabase provider/redirect settings in the README are still required. Mobile lint and TypeScript pass. The Android debug app was rebuilt for the new native module; actual Google sign-in on the phone is unverified until the provider is configured.
+
+- Profile is now account-aware instead of a fixed demo identity: it shows the signed-in `@username` and email, a sign-in/create-account entry (with Google), a choose-username prompt and a retry state, and opens the same account panel for sign-out. The fixture is kept under a labelled “Try a sample” section. The Samsung UI hierarchy showed the real signed-in username and email after a Metro refresh. Listing a person's own shared moments needs a new owner endpoint and is not built.
+
 ### Android local test startup — 17 October
 
 - The connected Samsung initially ran a stale development binary that failed with `Cannot find native module 'ExpoCrypto'`. Rebuilt and reinstalled Android Debug successfully; mobile lint and TypeScript pass. Relaunched through the `exp+peekalo` development-client scheme with Metro on USB-forwarded port 8081. The device UI hierarchy now contains Camera, Inbox and Profile, with no missing-module error in the fresh Metro session. No camera frames or private captures were saved.
