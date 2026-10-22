@@ -1,3 +1,5 @@
+# Reference/recreation manifest: live previews were created via MCP, not a Blueprint.
+# Review adoption before applying; HTTP checks/shutdown target below are not yet applied.
 # Free development preview only; retain Supabase for Auth, database and storage.
 # Use the two assigned public HTTPS origins, never Render private hostnames.
 # Keep collection closed and paid upgrades deferred.
