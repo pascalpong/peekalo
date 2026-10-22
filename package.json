@@ -17,7 +17,7 @@
     "build": "pnpm build:site && pnpm build:web",
     "export:mobile": "pnpm --filter @peekalo/mobile export",
     "test:mobile": "pnpm --filter @peekalo/mobile test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:mobile && pnpm test:reveal && pnpm test:backend && pnpm test:hosting && pnpm test:waitlist && pnpm test:web-split && pnpm brand:check && pnpm build && pnpm export:mobile",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:mobile && pnpm test:reveal && pnpm test:backend && pnpm test:hosting && pnpm test:uploads && pnpm test:delivery && pnpm test:waitlist && pnpm test:web-split && pnpm brand:check && pnpm build && pnpm export:mobile",
     "test:hosting": "node --test scripts/test-hosting-runtime.mjs",
     "brand:generate": "node scripts/generate-brand.mjs",
     "brand:check": "node scripts/generate-brand.mjs --check",
@@ -28,7 +28,13 @@
     "dev:site": "pnpm --filter @peekalo/site dev",
     "build:site": "pnpm --filter @peekalo/site build",
     "build:web": "pnpm --filter @peekalo/web build",
-    "test:web-split": "node --test scripts/test-web-split.mjs"
+    "test:web-split": "node --test scripts/test-web-split.mjs",
+    "test:uploads": "node --test scripts/test-upload-admission.mjs scripts/test-upload-ledger.mjs scripts/test-upload-handler.mjs scripts/test-backend-fetch.mjs",
+    "test:delivery": "node --test scripts/test-private-media-cache.mjs scripts/test-media-delivery.mjs",
+    "local:setup": "node scripts/dev-local-backend.mjs",
+    "local:stop": "node scripts/dev-local-backend.mjs stop",
+    "dev:web:local": "node scripts/dev-local-apps.mjs web",
+    "dev:mobile:local": "node scripts/dev-local-apps.mjs mobile"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

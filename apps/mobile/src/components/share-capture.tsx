@@ -3,7 +3,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle } from '../lib/sharing-client';
+import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle, type AuthProviders } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
 import { BrandLogo } from './brand';
 
@@ -29,6 +29,8 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   const [recipient, setRecipient] = useState('');
   const [hasLink, setHasLink] = useState(false);
   const [lastRecipient, setLastRecipient] = useState('');
+  const [providers, setProviders] = useState<AuthProviders>({ google: null, email: null });
+  const operation = useRef<AbortController | null>(null);
   const draft = useRef<Draft | null>(null);
   const busyRef = useRef(false);
   const generation = useRef(0);
@@ -36,65 +38,80 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   callback.current = onBusyChange;
   const captureUri = capture?.uri;
 
-  useEffect(() => () => { generation.current++; callback.current?.(false); }, []);
+  function cancelOperation() {
+    generation.current++;
+    operation.current?.abort();
+    operation.current = null;
+    busyRef.current = false;
+    callback.current?.(false);
+  }
+  useEffect(() => () => { cancelOperation(); }, []);
   useEffect(() => {
     if (draft.current?.uri !== captureUri) {
-      generation.current++;
-      busyRef.current = false; setBusy(false); callback.current?.(false);
+      cancelOperation(); setBusy(false);
       draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
       setHasLink(false); setLastRecipient(''); setNotice(''); setError(''); setRecipient('');
     }
   }, [captureUri]);
 
-  async function run(action: (current: () => boolean) => Promise<void>) {
+  async function run(action: (current: () => boolean, signal: AbortSignal) => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
+    const controller = new AbortController();
+    operation.current = controller;
     const epoch = generation.current;
-    const current = () => epoch === generation.current;
+    const current = () => epoch === generation.current && !controller.signal.aborted;
     setBusy(true); setError(''); setNotice(''); callback.current?.(true);
-    try { await action(current); }
+    try { await action(current, controller.signal); }
     catch (failure) {
       if (current()) {
         setError(failure instanceof SharingError ? failure.message : 'This action did not finish. Please try again.');
         if (failure instanceof SharingError && failure.code === 'unauthorized') setStage('auth');
       }
     } finally {
-      if (current()) { busyRef.current = false; setBusy(false); setProgress(''); callback.current?.(false); }
+      if (current()) { operation.current = null; busyRef.current = false; setBusy(false); setProgress(''); callback.current?.(false); }
     }
   }
 
-  async function loadAccount(current: () => boolean) {
-    const client = await getSharingClient();
+  async function loadAccount(current: () => boolean, signal: AbortSignal) {
+    const client = await getSharingClient(signal);
     const { data, error: sessionError } = await client.auth.getSession();
     if (sessionError) throw new SharingError('Your sign-in could not be restored. Please try again.');
     if (!current()) return;
-    if (!data.session) { setStage('auth'); return; }
+    if (!data.session) {
+      const available = await getAuthProviders(signal);
+      if (current()) { setProviders(available); setStage('auth'); }
+      return;
+    }
     if (draft.current && draft.current.userId !== data.session.user.id) {
       draft.current = { uri: draft.current.uri, userId: data.session.user.id, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() };
-      setHasLink(false);
+      setHasLink(false); setLastRecipient(''); setRecipient('');
     }
-    const profile = await apiRequest<{ username: string | null }>('/api/profile');
+    const profile = await apiRequest<{ username: string | null }>('/api/profile', { signal });
     if (current()) { setUsername(profile.username ?? ''); setStage(profile.username ? 'ready' : 'username'); }
   }
 
   function connect() {
     setStage('connecting');
-    void run(async current => {
-      try { await loadAccount(current); }
+    void run(async (current, signal) => {
+      try { await loadAccount(current, signal); }
       catch (failure) { if (current()) setStage('unavailable'); throw failure; }
     });
   }
 
   useEffect(() => {
     if (visible) connect();
+    else { cancelOperation(); setBusy(false); setProgress(''); setPassword(''); }
     // A capture's retry keys and uploaded post survive closing/reopening this modal.
   }, [visible, captureUri]);
 
   function authenticate() {
-    void run(async current => {
-      const client = await getSharingClient();
+    void run(async (current, signal) => {
+      const client = await getSharingClient(signal);
+      if (!current()) return;
       const credentials = { email: email.trim(), password };
       const result = signingUp ? await client.auth.signUp(credentials) : await client.auth.signInWithPassword(credentials);
+      if (!current()) return;
       if (result.error) {
         const code = result.error.code;
         if (code === 'email_address_not_authorized') throw new SharingError('Signup email delivery is not ready for this address yet. Please contact the app owner.');
@@ -107,27 +124,27 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
         setNotice('Check your email to confirm your account, then return here and sign in.');
         return;
       }
-      await loadAccount(current);
+      await loadAccount(current, signal);
     });
   }
 
   function continueWithGoogle() {
-    void run(async current => {
-      const signedIn = await signInWithGoogle();
-      if (signedIn && current()) await loadAccount(current);
+    void run(async (current, signal) => {
+      const signedIn = await signInWithGoogle(signal);
+      if (signedIn && current()) await loadAccount(current, signal);
     });
   }
 
   function saveUsername() {
-    void run(async current => {
+    void run(async (current, signal) => {
       const name = username.trim().toLowerCase().replace(/^@/, '');
       if (!/^[a-z0-9_]{3,24}$/.test(name)) throw new SharingError('Use 3–24 letters, numbers or underscores.');
-      await apiRequest('/api/profile', { method: 'POST', body: { username: name } });
+      await apiRequest('/api/profile', { method: 'POST', body: { username: name }, signal });
       if (current()) { setUsername(name); setStage('ready'); }
     });
   }
 
-  async function upload(current: () => boolean) {
+  async function upload(current: () => boolean, signal: AbortSignal) {
     const currentDraft = draft.current;
     if (!currentDraft || !capture) throw new SharingError('Please close sharing and try again.');
     if (currentDraft.postId) return currentDraft;
@@ -136,7 +153,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     form.append('kind', capture.kind);
     form.append('file', { uri: capture.uri, name: capture.kind === 'photo' ? 'capture.jpg' : 'capture.mp4', type: capture.kind === 'photo' ? 'image/jpeg' : 'video/mp4' } as unknown as Blob);
     const post = await apiRequest<{ postId: string; status: string }>('/api/posts', {
-      method: 'POST', body: form, headers: { 'Idempotency-Key': currentDraft.uploadKey },
+      method: 'POST', body: form, headers: { 'Idempotency-Key': currentDraft.uploadKey }, signal,
     });
     if (!current()) throw new SharingError('This capture changed. Please try again.');
     if (post.status !== 'ready' || !post.postId) throw new SharingError('This capture is not ready to share. Please try again.');
@@ -145,12 +162,13 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   }
 
   function createLink() {
-    void run(async current => {
-      const currentDraft = await upload(current);
+    void run(async (current, signal) => {
+      const currentDraft = await upload(current, signal);
+      if (!current()) return;
       if (!currentDraft.link) {
         setProgress('Creating your private link…');
         const link = await apiRequest<{ url: string; expiresAt: string }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/link`, {
-          method: 'POST', headers: { 'Idempotency-Key': currentDraft.linkKey }, body: {},
+          method: 'POST', headers: { 'Idempotency-Key': currentDraft.linkKey }, body: {}, signal,
         });
         if (!current()) return;
         const parsed = new URL(link.url);
@@ -158,6 +176,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
         currentDraft.link = link.url;
         setHasLink(true);
       }
+      if (!current()) return;
       setProgress('Opening share options…');
       const result = await Share.share({ message: currentDraft.link!, title: 'A moment for you on Peekalo' });
       if (current()) setNotice(result.action === Share.dismissedAction ? 'Your link is ready. Tap Share link to open the options again.' : 'Link ready. Only the first viewer to reveal it can claim it.');
@@ -165,12 +184,13 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   }
 
   function sendToRecipient() {
-    void run(async current => {
+    void run(async (current, signal) => {
       const name = recipient.trim().toLowerCase().replace(/^@/, '');
       if (!/^[a-z0-9_]{3,24}$/.test(name)) throw new SharingError('Enter a valid Peekalo username.');
-      const currentDraft = await upload(current);
+      const currentDraft = await upload(current, signal);
+      if (!current()) return;
       setProgress('Sharing with your recipient…');
-      const result = await apiRequest<{ requestState: 'pending' | 'accepted' }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/recipients`, { method: 'POST', body: { username: name } });
+      const result = await apiRequest<{ requestState: 'pending' | 'accepted' }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/recipients`, { method: 'POST', body: { username: name }, signal });
       if (result.requestState !== 'pending' && result.requestState !== 'accepted') throw new SharingError('This share was not confirmed. Please try again.');
       if (current()) setLastRecipient(name);
       if (current()) setNotice(result.requestState === 'pending' ? `Request sent to @${name}. They must accept before they can reveal it.` : `Shared with @${name}. It is available in their Peekalo Inbox.`);
@@ -178,10 +198,10 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   }
 
   function revokeLink() {
-    void run(async current => {
+    void run(async (current, signal) => {
       const value = draft.current;
       if (!value?.postId) return;
-      await apiRequest(`/api/posts/${value.postId}/link`, { method: 'DELETE' });
+      await apiRequest(`/api/posts/${value.postId}/link`, { method: 'DELETE', signal });
       if (current()) {
         delete value.link;
         value.linkKey = newIdempotencyKey();
@@ -191,47 +211,57 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     });
   }
   function revokeRecipient() {
-    void run(async current => {
+    void run(async (current, signal) => {
       const value = draft.current;
       if (!value?.postId || !lastRecipient) return;
-      await apiRequest(`/api/posts/${value.postId}/recipients`, { method: 'DELETE', body: { username: lastRecipient } });
+      await apiRequest(`/api/posts/${value.postId}/recipients`, { method: 'DELETE', body: { username: lastRecipient }, signal });
       if (current()) { setLastRecipient(''); setNotice('Recipient access revoked.'); }
     });
   }
 
   function signOut() {
-    void run(async current => {
-      const client = await getSharingClient();
+    void run(async (current, signal) => {
+      const client = await getSharingClient(signal);
+      if (!current()) return;
       const { error: signOutError } = await client.auth.signOut({ scope: 'local' });
       if (signOutError) throw new SharingError('Sign-out did not finish. Please try again.');
-      if (current()) { setUsername(''); setPassword(''); setStage('auth'); setNotice('Signed out on this device.'); }
+      if (current()) {
+        draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
+        setHasLink(false); setLastRecipient(''); setRecipient(''); setUsername(''); setPassword('');
+        setStage('auth'); setNotice('Signed out on this device.');
+        const available = await getAuthProviders(signal);
+        if (current()) setProviders(available);
+      }
     });
   }
 
-  const close = () => { if (!busyRef.current) { setPassword(''); onClose(); } };
+  const close = () => { cancelOperation(); setBusy(false); setProgress(''); setPassword(''); onClose(); };
   return <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
     {/* A native modal has its own window; measure its insets independently of the tab screen. */}
     <SafeAreaProvider style={styles.safe}>
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.header}><BrandLogo />
-          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" disabled={busy} onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
           <Text style={styles.eyebrow}>{capture ? 'A MOMENT FOR SOMEONE' : 'YOUR PEEKALO ACCOUNT'}</Text>
           <Text style={styles.title}>{capture ? `Share your ${capture.kind}.` : 'A little closer.'}</Text>
           <Text style={styles.body}>{capture ? 'Your capture stays private. Choose a Peekalo recipient or create a single-use link.' : 'Sign in to receive and share moments on Peekalo.'}</Text>
-          {stage === 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text style={styles.body}>Connecting to Peekalo…</Text></View>}
+          {stage === 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text style={styles.body}>Connecting to Peekalo… The free test server may take about a minute to wake up. You can close this and try again.</Text></View>}
           {stage === 'unavailable' && <Action label="Try connection again" onPress={connect} disabled={busy} />}
           {stage === 'auth' && <View style={styles.section}>
             <Text style={styles.heading}>{signingUp ? 'Create your account' : capture ? 'Sign in to share' : 'Sign in to Peekalo'}</Text>
-            <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={continueWithGoogle} style={({ pressed }) => [styles.google, (pressed || busy) && styles.dim]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || providers.google === false }} disabled={busy || providers.google === false} onPress={continueWithGoogle} style={({ pressed }) => [styles.google, (pressed || busy || providers.google === false) && styles.dim]}>
               <AntDesign name="google" size={20} color={colors.text} /><Text style={[styles.actionText, styles.secondaryText]}>Continue with Google</Text>
             </Pressable>
+            {providers.google === false && <Text style={styles.body}>Google sign-in is not configured on this test backend yet.</Text>}
             <Text style={styles.divider}>or use email</Text>
+            {providers.email === false && <Text style={styles.body}>Email sign-in is disabled on this backend.</Text>}
+            {signingUp && providers.email !== false && <Text style={styles.body}>Confirm your email before signing in. If the email does not arrive, ask the app owner to check email delivery.</Text>}
             <TextInput style={styles.input} accessibilityLabel="Email" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" autoComplete="email" editable={!busy} />
             <TextInput style={styles.input} accessibilityLabel="Password" placeholder={signingUp ? 'Password (at least 8 characters)' : 'Password'} placeholderTextColor={colors.muted} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete={signingUp ? 'new-password' : 'current-password'} editable={!busy} />
-            <Action label={signingUp ? 'Create account' : 'Sign in'} onPress={authenticate} disabled={busy || !email.trim() || password.length < (signingUp ? 8 : 1)} />
+            <Action label={signingUp ? 'Create account' : 'Sign in'} onPress={authenticate} disabled={busy || providers.email === false || !email.trim() || password.length < (signingUp ? 8 : 1)} />
             <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setSigningUp(!signingUp); setError(''); setNotice(''); }} style={styles.textButton}><Text style={styles.textButtonLabel}>{signingUp ? 'Already have an account? Sign in' : 'New here? Create an account'}</Text></Pressable>
           </View>}
           {stage === 'username' && <View style={styles.section}>

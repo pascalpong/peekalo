@@ -77,3 +77,5 @@ Marketing visual refinement (20 October): the user selected a dark, mysterious d
 | P-07 | Small invited adult beta | Choose launch countries, age policy and operating/moderation rules before beta. |
 
 Current unresolved defaults do not block the local scaffold or fixture-based interaction demo.
+
+22 October local testing: the user chose Android first, has no domain/email provider and requested help creating Google OAuth. Prepare an isolated local Supabase + captured-email inbox with confirmation enabled, separate accounts and loopback-only ports; retain the existing hosted development project. Do not buy a domain/provider or enable paid hosting as part of this setup. Google project Peekalo Development (`quick-yen-512406-g8`) is created; credential/consent setup and device sign-in remain pending.

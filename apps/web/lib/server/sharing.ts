@@ -17,9 +17,15 @@ export function configuration() {
   if (!url || !anon || !service || !secret || secret.length < 32 || !appUrl) throw new ApiError(503, 'sharing_unavailable');
   return { url, anon, service, secret, appUrl: new URL(appUrl).origin };
 }
+// Covers response bodies as well as initial headers; never logs upstream data.
+export async function backendFetch(input: Parameters<typeof fetch>[0], init?: RequestInit, timeoutMs = 15_000) {
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline;
+  return fetch(input, { ...init, cache: 'no-store', signal });
+}
 export function database() {
   const c = configuration();
-  return createClient(c.url, c.service, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (url, init) => fetch(url, { ...init, cache: 'no-store' }) } });
+  return createClient(c.url, c.service, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (url, init) => backendFetch(url, init) } });
 }
 export async function account(request: Request) {
   const bearer = request.headers.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];

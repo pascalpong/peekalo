@@ -95,6 +95,7 @@ let clientPromise: Promise<SupabaseClient> | undefined;
 let authConfig: { supabaseUrl: string; supabaseAnonKey: string } | undefined;
 
 async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
+  if (options.signal?.aborted) throw new SharingError('The request was cancelled.', 'cancelled');
   const controller = new AbortController();
   const cancel = () => controller.abort();
   const timer = setTimeout(cancel, timeoutMs);
@@ -105,14 +106,36 @@ async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: 
   finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
 }
 
-export function getSharingClient(): Promise<SupabaseClient> {
+const cancelled = () => new SharingError('The request was cancelled.', 'cancelled');
+function checkCancelled(signal?: AbortSignal) {
+  if (signal?.aborted) throw cancelled();
+}
+
+// A screen may stop waiting without cancelling another screen's shared bootstrap.
+function waitForClient(promise: Promise<SupabaseClient>, signal?: AbortSignal): Promise<SupabaseClient> {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const cancel = () => { signal.removeEventListener('abort', cancel); reject(cancelled()); };
+    signal.addEventListener('abort', cancel, { once: true });
+    if (signal.aborted) cancel();
+    void promise.then(value => {
+      signal.removeEventListener('abort', cancel);
+      if (!signal.aborted) resolve(value);
+    }, error => {
+      signal.removeEventListener('abort', cancel);
+      if (!signal.aborted) reject(error);
+    });
+  });
+}
+
+export function getSharingClient(signal?: AbortSignal): Promise<SupabaseClient> {
+  if (signal?.aborted) return Promise.reject(cancelled());
   if (!clientPromise) {
     clientPromise = (async () => {
       let response: Response;
-      try { response = await requestWithTimeout(resolveApiUrl('/api/shares/config'), { cache: 'no-store' }, 20_000); }
+      try { response = await requestWithTimeout(resolveApiUrl('/api/shares/config'), { cache: 'no-store' }, 90_000); }
       catch (error) {
         if (error instanceof SharingError) throw error;
-        if (__DEV__) console.warn('[sharing] config request failed', process.env.EXPO_PUBLIC_API_URL, String(error));
         throw new SharingError('Cannot reach Peekalo. Check your connection and try again.');
       }
       if (!response.ok) throw new SharingError('Sharing is not available right now. Please try again.');
@@ -134,40 +157,62 @@ export function getSharingClient(): Promise<SupabaseClient> {
       return client;
     })().catch(error => { clientPromise = undefined; throw error; });
   }
-  return clientPromise;
+  return waitForClient(clientPromise, signal);
 }
 
 // Must match an entry in Supabase Auth > URL Configuration > Redirect URLs.
 export const authRedirectUrl = 'peekalo://auth-callback';
 
-async function providerEnabled(provider: 'google') {
-  if (!authConfig) return false;
+export type AuthProviders = { google: boolean | null; email: boolean | null };
+
+export async function getAuthProviders(signal?: AbortSignal): Promise<AuthProviders> {
+  await getSharingClient(signal);
+  checkCancelled(signal);
   try {
-    const response = await requestWithTimeout(`${authConfig.supabaseUrl}/auth/v1/settings`, { headers: { apikey: authConfig.supabaseAnonKey }, cache: 'no-store' }, 15_000);
-    if (!response.ok) return false;
+    const response = await requestWithTimeout(`${authConfig!.supabaseUrl}/auth/v1/settings`, {
+      headers: { apikey: authConfig!.supabaseAnonKey }, cache: 'no-store', signal,
+    }, 15_000);
+    if (!response.ok) return { google: null, email: null };
     const settings = await response.json() as { external?: Record<string, boolean> };
-    return settings.external?.[provider] === true;
-  } catch { return false; }
+    checkCancelled(signal);
+    return {
+      google: typeof settings.external?.google === 'boolean' ? settings.external.google : null,
+      email: typeof settings.external?.email === 'boolean' ? settings.external.email : null,
+    };
+  } catch {
+    checkCancelled(signal);
+    return { google: null, email: null };
+  }
 }
 
 /** Returns false when the person closes the Google sheet without signing in. */
-export async function signInWithGoogle(): Promise<boolean> {
-  const client = await getSharingClient();
-  if (!await providerEnabled('google')) throw new SharingError('Google sign-in is not set up yet. Use email for now.', 'not_configured');
+export async function signInWithGoogle(signal?: AbortSignal): Promise<boolean> {
+  const client = await getSharingClient(signal);
+  const providers = await getAuthProviders(signal);
+  if (providers.google === false) throw new SharingError('Google sign-in is not configured on this test backend yet.', 'not_configured');
+  if (providers.google === null) throw new SharingError('Cannot check Google sign-in right now. Check your connection and try again.');
+  checkCancelled(signal);
   const { data, error } = await client.auth.signInWithOAuth({
     provider: 'google',
     options: { redirectTo: authRedirectUrl, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
   });
+  checkCancelled(signal);
   if (error || !data.url) throw new SharingError('Google sign-in could not start. Please try again.');
-  const result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUrl);
+  const dismiss = () => { try { WebBrowser.dismissAuthSession(); } catch { /* The sheet may already be closed. */ } };
+  signal?.addEventListener('abort', dismiss, { once: true });
+  let result: WebBrowser.WebBrowserAuthSessionResult;
+  try { result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUrl); }
+  finally { signal?.removeEventListener('abort', dismiss); }
+  checkCancelled(signal);
   if (result.type !== 'success') return false;
-  const params = new URL(result.url).searchParams;
-  const code = params.get('code');
-  if (!code) {
-    if (__DEV__) console.warn('[sharing] Google sign-in returned', params.get('error'), params.get('error_description'));
+  const redirect = new URL(result.url);
+  const expected = new URL(authRedirectUrl);
+  const code = redirect.searchParams.get('code');
+  if (redirect.protocol !== expected.protocol || redirect.host !== expected.host || redirect.pathname !== expected.pathname || !code) {
     throw new SharingError('Google sign-in did not finish. Please try again.');
   }
   const { error: exchangeError } = await client.auth.exchangeCodeForSession(code);
+  checkCancelled(signal);
   if (exchangeError) throw new SharingError('Google sign-in did not finish. Please try again.');
   return true;
 }
@@ -187,6 +232,8 @@ const errorMessages: Record<string, string> = {
   processing_failed: 'This capture could not be processed. Please retake it.',
   upload_in_progress: 'This capture is still being prepared. Wait a moment, then try the same action again.',
   upload_failed: 'The upload did not finish. Check your connection and try the same action again.',
+  request_timeout: 'The upload took too long. Check your connection and try the same action again.',
+  processing_busy: 'Another capture is being prepared. Wait a moment and try again.',
   sharing_unavailable: 'Peekalo sharing is temporarily unavailable. Please try again.',
   rate_limited: 'Too many attempts. Wait a moment, then try again.',
   limit_reached: 'Your active media limit has been reached.',
@@ -198,8 +245,10 @@ const errorMessages: Record<string, string> = {
 export async function apiRequest<T>(path: string, options: {
   method?: string; body?: unknown; headers?: Record<string, string>; signal?: AbortSignal;
 } = {}): Promise<T> {
-  const client = await getSharingClient();
+  checkCancelled(options.signal);
+  const client = await getSharingClient(options.signal);
   const { data, error } = await client.auth.getSession();
+  checkCancelled(options.signal);
   if (error || !data.session) throw new SharingError(errorMessages.unauthorized, 'unauthorized');
   const multipart = options.body instanceof FormData;
   let response: Response;
@@ -217,10 +266,11 @@ export async function apiRequest<T>(path: string, options: {
   } catch (error) {
     if (options.signal?.aborted) throw new SharingError('The request was cancelled.', 'cancelled');
     if (error instanceof SharingError) throw error;
-    if (__DEV__) console.warn('[sharing] API request failed', path, String(error));
     throw new SharingError('Cannot reach Peekalo. Check your connection and try again.');
   }
+  checkCancelled(options.signal);
   const result = await response.json().catch(() => null);
+  checkCancelled(options.signal);
   if (!response.ok) {
     const code = response.status === 401 ? 'unauthorized' : typeof result?.error === 'string' ? result.error : typeof result?.code === 'string' ? result.code : 'unavailable';
     throw new SharingError(response.status === 401 ? errorMessages.unauthorized : errorMessages[code] ?? 'This action did not finish. Please try again.', code);

@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const { createClient } = require('@supabase/supabase-js');
 const sharp = require('sharp');
@@ -20,13 +21,55 @@ const namespace = `test_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
 const users = [];
 const dir = await mkdtemp(path.join(tmpdir(), 'peekalo-test-'));
 let passed = 0;
+const timings = new Map();
 const check = (condition, label) => { assert(condition, label); passed++; };
+function category(route) {
+  if (route.startsWith('/api/view/media/')) return 'media';
+  if (route.startsWith('/api/view/')) return route.endsWith('/preview') ? 'preview' : 'lease';
+  if (route === '/api/posts') return 'upload';
+  if (route.endsWith('/link')) return 'link';
+  if (route.endsWith('/recipients')) return 'recipient';
+  if (route.endsWith('/accept')) return 'accept';
+  return 'profile';
+}
+function reportTimings() {
+  for (const [endpoint, samples] of timings) {
+    const durations = samples.map(sample => sample.elapsedMs).sort((a, b) => a - b);
+    const percentile = fraction => durations[Math.max(0, Math.ceil(durations.length * fraction) - 1)];
+    const counts = {};
+    for (const sample of samples) counts[sample.status] = (counts[sample.status] ?? 0) + 1;
+    console.log(JSON.stringify({ endpoint, count: samples.length, minMs: durations[0], p50Ms: percentile(0.5), p95Ms: percentile(0.95), maxMs: durations.at(-1), statusCounts: counts }));
+  }
+}
+async function afterExpiry(grant) {
+  await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(grant.data.expiresAt) - Date.now() + 100)));
+}
+function stillValid(grant, label) {
+  check(Number.isFinite(Date.parse(grant.data.expiresAt)) && Date.now() < Date.parse(grant.data.expiresAt), label);
+}
+async function together(operations) {
+  // A failed request must not leave sibling requests running while cleanup
+  // deletes the generated accounts and objects they are still exercising.
+  const results = await Promise.allSettled(operations);
+  const failure = results.find(result => result.status === 'rejected');
+  if (failure) throw failure.reason;
+  return results.map(result => result.value);
+}
 async function api(route, { token, value, form, cookie, key, method = 'POST', headers = {} } = {}) {
-  const response = await fetch(`${base}${route}`, { method, headers: { Origin: origin, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(cookie ? { Cookie: cookie } : {}), ...(key ? { 'Idempotency-Key': key } : {}), ...(value ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: form ?? (value ? JSON.stringify(value) : undefined) });
-  let data;
-  if (response.headers.get('content-type')?.includes('application/json')) data = await response.json();
-  else data = Buffer.from(await response.arrayBuffer());
-  return { status: response.status, data, cookie: response.headers.get('set-cookie')?.split(';')[0], headers: response.headers };
+  const endpoint = category(route); const started = performance.now(); let status = 'network_failure';
+  try {
+    const response = await fetch(`${base}${route}`, { method, headers: { Origin: origin, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(cookie ? { Cookie: cookie } : {}), ...(key ? { 'Idempotency-Key': key } : {}), ...(value ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: form ?? (value ? JSON.stringify(value) : undefined), signal: AbortSignal.timeout(form ? 150_000 : 20_000) });
+    status = response.status;
+    let data;
+    if (response.headers.get('content-type')?.includes('application/json')) data = await response.json();
+    else data = Buffer.from(await response.arrayBuffer());
+    return { status: response.status, data, cookie: response.headers.get('set-cookie')?.split(';')[0], headers: response.headers };
+  } catch { throw new Error(`Integration ${endpoint} request failed; configuration and request details omitted.`); }
+  finally {
+    const samples = timings.get(endpoint) ?? [];
+    samples.push({ status, elapsedMs: Math.round(performance.now() - started) });
+    timings.set(endpoint, samples);
+  }
 }
 async function user(suffix) {
   const email = `${namespace}_${suffix}@example.invalid`; const password = randomUUID() + 'aA1!';
@@ -43,8 +86,36 @@ async function unclaimedLink(postId, token, label) {
   const { data, error } = await db.from('peekalo_links').select('claimed_identity').eq('post_id', postId).eq('token_hash', hash).single();
   check(!error && data?.claimed_identity === null, label);
 }
+async function fixtureStorageObjects(owner) {
+  // Never enumerate the bucket root or a prefix outside accounts created by
+  // this run. Support both legacy owner/file and fenced owner/post/attempt.
+  assert(users.includes(owner) && /^[0-9a-f-]{36}$/i.test(owner), 'Cleanup requires an account created by this integration run');
+  const storage = db.storage.from('peekalo-captures');
+  const objects = []; let visited = 0;
+  async function visit(prefix, depth) {
+    assert(depth <= 8, 'Generated fixture cleanup exceeded its folder depth bound');
+    for (let offset = 0; offset < 10_000; offset += 100) {
+      const { data: entries, error } = await storage.list(prefix, { limit: 100, offset, sortBy: { column: 'name', order: 'asc' } });
+      assert(!error && Array.isArray(entries), 'Generated fixture Storage listing failed');
+      for (const entry of entries) {
+        assert(++visited <= 10_000, 'Generated fixture cleanup exceeded its entry bound');
+        assert(typeof entry.name === 'string' && entry.name.length > 0 && !['.', '..'].includes(entry.name) && !/[\\/]/.test(entry.name), 'Generated fixture cleanup received an unsafe object name');
+        const path = `${prefix}/${entry.name}`;
+        if (entry.id === null) await visit(path, depth + 1);
+        else {
+          assert(typeof entry.id === 'string' && entry.id.length > 0, 'Generated fixture cleanup received an unknown Storage entry');
+          objects.push(path);
+        }
+      }
+      if (entries.length < 100) return;
+    }
+    assert.fail('Generated fixture cleanup exceeded its pagination bound');
+  }
+  await visit(owner, 0);
+  return objects;
+}
 try {
-  // Warm the gateway before a one-second grant; compilation/startup is not viewing time.
+  // Warm the gateway before a two-second grant; compilation/startup is not viewing time.
   await api(`/api/view/media/${randomUUID()}`, { method: 'GET' });
   const owner = await user('a'); const recipient = await user('b');
   for (const person of [owner, recipient]) {
@@ -53,7 +124,7 @@ try {
   }
   const image = await sharp({ create: { width: 360, height: 640, channels: 3, background: '#b5d278' } }).jpeg().toBuffer();
   const key = randomUUID();
-  const uploads = await Promise.all([0, 1].map(() => api('/api/posts', { token: owner.token, key, form: form(image, 'photo', 'image/jpeg') })));
+  const uploads = await together([0, 1].map(() => api('/api/posts', { token: owner.token, key, form: form(image, 'photo', 'image/jpeg') })));
   const success = uploads.find(result => result.status === 200);
   check(Boolean(success), 'At least one idempotent concurrent upload succeeds');
   const post = success.data.postId;
@@ -66,7 +137,7 @@ try {
   const unauthorized = await api(`/api/posts/${post}/link`, { token: recipient.token, key: randomUUID() });
   check(unauthorized.status === 404, 'Non-owner cannot create share rights');
   const linkKeys = [randomUUID(), randomUUID()];
-  const links = await Promise.all(linkKeys.map(key => api(`/api/posts/${post}/link`, { token: owner.token, key })));
+  const links = await together(linkKeys.map(key => api(`/api/posts/${post}/link`, { token: owner.token, key })));
   check(links.every(result => result.status === 200) && links[0].data.url === links[1].data.url, 'Concurrent link requests reuse single active link');
   const token = new URL(links[0].data.url).hash.slice(1);
   const before = await api('/api/view/preview', { value: { token } });
@@ -80,31 +151,46 @@ try {
   const csrf = await api('/api/view/lease', { value: { token, sessionId: randomUUID(), requestId: randomUUID() }, headers: { Origin: 'https://untrusted.invalid' } });
   check(csrf.status === 403, 'Cross-origin cookie reveal is rejected');
   const sessions = [randomUUID(), randomUUID()]; const requests = [randomUUID(), randomUUID()];
-  const race = await Promise.all(sessions.map((sessionId, index) => api('/api/view/lease', { value: { token, sessionId, requestId: requests[index] } })));
+  let winnerChecks;
+  const race = await together(sessions.map(async (sessionId, index) => {
+    const result = await api('/api/view/lease', { value: { token, sessionId, requestId: requests[index] } });
+    if (result.status === 200) {
+      // Exercise these short-lease constraints as soon as the winner arrives,
+      // without spending its grant waiting for the slower losing response.
+      winnerChecks = together([
+        api('/api/view/lease', { cookie: result.cookie, value: { token, sessionId, requestId: requests[index] } }),
+        api('/api/view/lease', { cookie: result.cookie, value: { token, sessionId: randomUUID(), requestId: randomUUID() } }),
+        api('/api/view/lease', { cookie: result.cookie, value: { token, sessionId, requestId: randomUUID() } }),
+      ]);
+      // Attach rejection handling immediately, even if the losing race is slow.
+      await winnerChecks;
+    }
+    return result;
+  }));
   const winnerIndex = race.findIndex(result => result.status === 200); const winner = race[winnerIndex];
   check(winnerIndex >= 0 && race.filter(result => result.status === 200).length === 1 && race.some(result => result.status === 410), 'Exactly one anonymous racing identity claims link');
-  const repeat = await api('/api/view/lease', { cookie: winner.cookie, value: { token, sessionId: sessions[winnerIndex], requestId: requests[winnerIndex] } });
+  const [repeat, busy, early] = await winnerChecks;
   check(repeat.status === 200 && repeat.data.leaseId === winner.data.leaseId && repeat.data.remainingMs === 8000, 'Duplicate lease request is idempotent');
-  const [rawMedia, busy, early] = await Promise.all([
-    api(new URL(winner.data.mediaUrl).pathname, { cookie: winner.cookie, method: 'GET' }),
-    api('/api/view/lease', { cookie: winner.cookie, value: { token, sessionId: randomUUID(), requestId: randomUUID() } }),
-    api('/api/view/lease', { cookie: winner.cookie, value: { token, sessionId: sessions[winnerIndex], requestId: randomUUID() } }),
-  ]);
-  check(rawMedia.status === 200 && rawMedia.headers.get('cache-control').includes('no-store'), `Authorized media is private and no-store (HTTP ${rawMedia.status})`);
-  const metadata = await sharp(rawMedia.data).metadata();
-  check(metadata.width === 1080 && metadata.height === 1920 && !metadata.exif, 'Photo normalized to 9:16 without EXIF');
   check(busy.status === 409 && busy.data.error === 'viewer_busy', 'Simultaneous same-identity sessions are serialized');
-  check(early.status === 409, 'Immediate renewal cannot prepay full allowance');
+  check(early.status === 409 && early.data.error === 'renew_later', 'Immediate renewal cannot prepay full allowance');
   const cleared = await api('/api/view/lease', { value: { token, sessionId: randomUUID(), requestId: randomUUID() } });
   check(cleared.status === 410, 'Cookie reset cannot reclaim claimed link');
-  await new Promise(resolve => setTimeout(resolve, 2050));
+  await afterExpiry(winner);
   const expired = await api(new URL(winner.data.mediaUrl).pathname, { cookie: winner.cookie, method: 'GET' });
   check(expired.status === 410, 'New media requests fail after lease expiration');
   const sessionId = sessions[winnerIndex]; let latest;
   for (let index = 0; index < 4; index++) {
     latest = await api('/api/view/lease', { cookie: winner.cookie, value: { token, sessionId, requestId: randomUUID() } });
     check(latest.status === 200 && latest.data.remainingMs === 6000 - index * 2000, 'Cumulative budget never resets across holds');
-    if (index < 3) await new Promise(resolve => setTimeout(resolve, 2010));
+    if (index === 0) {
+      // Delivery gets an ordinary fresh slice, separate from race/idempotency
+      // round trips. It must still finish under the real two-second deadline.
+      const rawMedia = await api(new URL(latest.data.mediaUrl).pathname, { cookie: winner.cookie, method: 'GET' });
+      check(rawMedia.status === 200 && rawMedia.headers.get('cache-control').includes('no-store'), `Authorized media is private and no-store (HTTP ${rawMedia.status})`);
+      const metadata = await sharp(rawMedia.data).metadata();
+      check(metadata.width === 1080 && metadata.height === 1920 && !metadata.exif, 'Photo normalized to 9:16 without EXIF');
+    }
+    if (index < 3) await afterExpiry(latest);
   }
   const exhausted = await api('/api/view/lease', { cookie: winner.cookie, value: { token, sessionId, requestId: randomUUID() } });
   check(exhausted.status === 410 && exhausted.data.error === 'exhausted', 'Five prepaid slices exhaust budget');
@@ -135,14 +221,24 @@ try {
   check(pending.status === 404, 'Pending request cannot reveal even with grant');
   const accepted = await api(`/api/inbox/${post}/accept`, { token: recipient.token });
   check(accepted.status === 200, 'Recipient explicitly accepts own request');
-  const direct = await api('/api/view/direct', { token: recipient.token, value: directInput });
-  check(direct.status === 200 && direct.data.remainingMs === 8000, 'Accepted direct recipient has independent account budget');
   const denyRevoke = await api(`/api/posts/${post}/recipients`, { token: recipient.token, method: 'DELETE', value: { username: recipient.username } });
   check(denyRevoke.status === 404, 'Recipient cannot revoke owner grants');
+  const direct = await api('/api/view/direct', { token: recipient.token, value: directInput });
+  check(direct.status === 200 && direct.data.remainingMs === 8000, 'Accepted direct recipient has independent account budget');
+  const directMedia = await api(new URL(direct.data.mediaUrl).pathname, { token: recipient.token, method: 'GET' });
+  check(directMedia.status === 200 && directMedia.headers.get('cache-control').includes('no-store'), 'Accepted direct recipient can fetch private photo bytes before revocation');
+  await afterExpiry(direct);
+  const directRevocationLease = await api('/api/view/direct', { token: recipient.token, value: { ...directInput, requestId: randomUUID() } });
+  check(directRevocationLease.status === 200 && directRevocationLease.data.remainingMs === 6000, 'Fresh recipient revocation slice charges the existing cumulative allowance');
   const ownerRevoke = await api(`/api/posts/${post}/recipients`, { token: owner.token, method: 'DELETE', value: { username: recipient.username } });
   check(ownerRevoke.status === 200, 'Owner can revoke recipient grant');
-  const revoked = await api(new URL(direct.data.mediaUrl).pathname, { token: recipient.token, method: 'GET' });
+  const [revoked, deniedDirectLease] = await together([
+    api(new URL(directRevocationLease.data.mediaUrl).pathname, { token: recipient.token, method: 'GET' }),
+    api('/api/view/direct', { token: recipient.token, value: { ...directInput, requestId: randomUUID() } }),
+  ]);
   check(revoked.status === 404, 'Revocation denies new media requests immediately');
+  check(deniedDirectLease.status === 404, 'Revoked recipient grant denies a new lease');
+  stillValid(directRevocationLease, 'Recipient revocation denials complete before the existing grant expires');
   const restored = await api(`/api/posts/${post}/recipients`, { token: owner.token, value: { username: recipient.username } });
   check(restored.status === 200 && restored.data.requestState === 'accepted', 'Owner can restore an already accepted recipient grant');
   const directAsLink = await api('/api/view/lease', { token: recipient.token, value: { token: replacementToken, sessionId: directInput.sessionId, requestId: directInput.requestId } });
@@ -150,10 +246,10 @@ try {
   await unclaimedLink(post, replacementToken, 'Cross-scope direct retry does not claim the fresh link');
   // Let the existing slice expire before granting a new request through the
   // other path. Account identity/post retains its original cumulative budget.
-  await new Promise(resolve => setTimeout(resolve, Math.max(0, Date.parse(direct.data.expiresAt) - Date.now() + 50)));
+  await afterExpiry(directRevocationLease);
   const accountLinkInput = { token: replacementToken, sessionId: directInput.sessionId, requestId: randomUUID() };
   const accountLink = await api('/api/view/lease', { token: recipient.token, value: accountLinkInput });
-  check(accountLink.status === 200 && accountLink.data.remainingMs === 6000, 'Account direct and link access share one cumulative allowance');
+  check(accountLink.status === 200 && accountLink.data.remainingMs === 4000, 'Account direct and link access share one cumulative allowance');
   const linkAsDirect = await api('/api/view/direct', { token: recipient.token, value: { postId: post, sessionId: accountLinkInput.sessionId, requestId: accountLinkInput.requestId } });
   check(linkAsDirect.status === 409 && linkAsDirect.data.error === 'conflict', 'Same-session link request cannot replay through direct access');
   const replacementRevoke = await api(`/api/posts/${post}/link`, { token: owner.token, method: 'DELETE' });
@@ -185,25 +281,54 @@ try {
   check(video.status === 200 && video.data.kind === 'video', 'Trusted worker normalizes generated short video');
   const videoLink = await api(`/api/posts/${video.data.postId}/link`, { token: owner.token, key: randomUUID() });
   const videoToken = new URL(videoLink.data.url).hash.slice(1);
-  const videoLease = await api('/api/view/lease', { value: { token: videoToken, sessionId: randomUUID(), requestId: randomUUID() } });
+  const videoSession = randomUUID();
+  const videoLease = await api('/api/view/lease', { value: { token: videoToken, sessionId: videoSession, requestId: randomUUID() } });
   check(videoLease.status === 200, 'Processed video uses same protected lease ledger');
   const videoRange = await api(new URL(videoLease.data.mediaUrl).pathname, { cookie: videoLease.cookie, method: 'GET', headers: { Range: 'bytes=0-65535' } });
   check(videoRange.status === 206 && videoRange.data.length <= 65536 && videoRange.headers.has('content-range'), `Authorized video range is bounded and private (HTTP ${videoRange.status}, bytes ${videoRange.data.length}, range ${videoRange.headers.has('content-range')})`);
+  // Downloading the first range can consume most of its valid slice. Do not
+  // confuse its expiry with revocation: obtain a fresh paid slice specifically
+  // for the owner-revoke and denial checks, retaining the same total allowance.
+  await afterExpiry(videoLease);
+  const revocationLease = await api('/api/view/lease', { cookie: videoLease.cookie, value: { token: videoToken, sessionId: videoSession, requestId: randomUUID() } });
+  check(revocationLease.status === 200 && revocationLease.data.remainingMs === 6000, 'Fresh video revocation slice charges the existing cumulative allowance');
   const videoRevoke = await api(`/api/posts/${video.data.postId}/link`, { token: owner.token, method: 'DELETE' });
   check(videoRevoke.status === 200, 'Owner can revoke external link');
-  const deniedVideo = await api(new URL(videoLease.data.mediaUrl).pathname, { cookie: videoLease.cookie, method: 'GET', headers: { Range: 'bytes=0-65535' } });
+  const [deniedVideo, deniedVideoLease] = await together([
+    api(new URL(revocationLease.data.mediaUrl).pathname, { cookie: videoLease.cookie, method: 'GET', headers: { Range: 'bytes=0-65535' } }),
+    api('/api/view/lease', { cookie: videoLease.cookie, value: { token: videoToken, sessionId: videoSession, requestId: randomUUID() } }),
+  ]);
   check(deniedVideo.status === 404, 'Revoked link denies later video ranges');
+  check(deniedVideoLease.status === 404, 'Revoked link denies a new video lease');
+  stillValid(revocationLease, 'External-link revocation denials complete before the existing grant expires');
   const longPath = path.join(dir, 'long.mp4');
   execFileSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0xb5d278:s=90x160:r=1', '-t', '11', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', longPath], { timeout: 20_000, stdio: 'ignore' });
   const long = await api('/api/posts', { token: owner.token, key: randomUUID(), form: form(await readFile(longPath), 'video', 'video/mp4') });
   check(long.status === 422, 'Over-ten-second video rejected server-side');
   console.log(`Protected sharing: ${passed} integration assertions passed (generated fixtures only).`);
 } finally {
+  reportTimings();
+  let cleanupFailed = false;
   for (const id of users) {
-    const { data: files } = await db.storage.from('peekalo-captures').list(id, { limit: 100 });
-    if (files?.length) await db.storage.from('peekalo-captures').remove(files.map(file => `${id}/${file.name}`));
-    const { error } = await db.auth.admin.deleteUser(id);
-    if (error) console.error('Temporary test-user cleanup failed; remove the test namespace using the admin dashboard.');
+    try {
+      // Finish all pagination before deleting, so removals cannot shift offsets
+      // and skip files. Delete only fully listed objects, never virtual folders.
+      const objects = await fixtureStorageObjects(id);
+      for (let offset = 0; offset < objects.length; offset += 100) {
+        const { error } = await db.storage.from('peekalo-captures').remove(objects.slice(offset, offset + 100));
+        assert(!error, 'Generated fixture object removal failed');
+      }
+      assert.equal((await fixtureStorageObjects(id)).length, 0, 'Generated fixture objects remain after cleanup');
+      // Keep the account if Storage cleanup failed, preserving its ownership
+      // reference for recovery. This list contains only accounts created above.
+      const { error } = await db.auth.admin.deleteUser(id);
+      if (error) cleanupFailed = true;
+    } catch { cleanupFailed = true; }
   }
-  await rm(dir, { force: true, recursive: true });
+  try { await rm(dir, { force: true, recursive: true }); }
+  catch { cleanupFailed = true; }
+  if (cleanupFailed) {
+    console.error('Generated integration fixture cleanup failed; inspect the development project using the admin dashboard.');
+    process.exitCode = 1;
+  }
 }

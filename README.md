@@ -150,6 +150,14 @@ Supabase’s default email service sends confirmations only to project-team addr
 
 The server prepays two-second viewing slices, allows renewal near expiry and caps cumulative grants at ten seconds per identity/post. Interrupted prepaid time is charged. Opaque previews never download originals; authorized media passes through a private no-store gateway. These controls cannot erase delivered bytes or guarantee capture prevention. The three-active-post proposal is not enforced until its meaning is confirmed; `PEEKALO_ACTIVE_POST_LIMIT` is an explicit optional server setting.
 
+### Isolated local registration testing
+
+`pnpm local:setup` prepares a separate Docker Supabase project with private storage and email confirmation enabled. Confirmation emails are captured on this Mac at `http://127.0.0.1:55324`, rather than sent externally. Google is disabled there until real OAuth credentials are supplied. These accounts are separate from hosted Supabase accounts. Runtime setup is still being verified under APP-TEST-01 on the build board.
+
+The helper uses the project-local CLI in `.cache/supabase-cli/supabase` when available, otherwise the installed CLI. It refuses unsafe port publication, keeps diagnostic/credential files private and never overwrites active app environment files. The older installed CLI did not honor loopback binding, so the current project-local CLI is used. `pnpm local:stop` stops only this test stack and preserves its volumes.
+
+After setup and `pnpm build:web`, run `pnpm dev:web:local` and `pnpm dev:mobile:local` in separate terminals. Metro uses port 8082 because another application owns 8081. For Android USB testing, reverse ports 3101 (product), 55321 (local Auth/Storage) and 8082 (Metro) with adb; the local inbox stays on the Mac. The mobile launcher receives only its public API origin, never server keys. Physical testing and Google/public email setup are separate pending steps.
+
 ### Google sign-in
 
 The account panel offers **Continue with Google** (Supabase OAuth with PKCE in the in-app browser sheet). It stays disabled with a clear message until the provider is configured:
@@ -217,4 +225,4 @@ PEEKALO_TEST_PROFILE=free node scripts/test-site-container.mjs
 
 These use synthetic credentials with 512 MiB / 0.1 CPU and do not create Supabase accounts or media. Realistic upload/transcoding capacity needs separate verification; the hosted Linux AMD64 split now passes CI as recorded below. Keep both `WAITLIST_ENABLED` values false; the website needs no Supabase secrets. No domain purchase or SMTP provider is needed for this closed preview.
 
-Before inviting users, finish upload admission/timeouts before body buffering and stale-upload recovery after crashes; the current processing concurrency guard begins after multipart buffering and an interrupted reservation can remain `uploading`. Rate limits, signup SMTP, physical native sharing/privacy, and a separate durable worker/job queue remain tracked work. Hosting preparation does not close them.
+Upload admission/body deadlines and fenced stale-upload recovery are now implemented under APP-TEST-01; deploy the matching gateway and migration together before relying on them. Failed attempt objects may remain private when publication state is uncertain; durable orphan cleanup remains future work. Rate limits, signup SMTP, physical native sharing/privacy, and a separate durable worker/job queue remain tracked work. Hosting preparation does not close them.
