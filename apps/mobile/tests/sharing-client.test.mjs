@@ -16,7 +16,7 @@ const deferred = () => {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
-function harness({ fetch = async () => config(), auth = {}, browser = {}, clock = {} } = {}) {
+function harness({ fetch = async () => config(), auth = {}, browser = {}, clock = {}, development = true, env = {} } = {}) {
   const calls = [];
   const logs = [];
   const timers = new Map();
@@ -38,8 +38,8 @@ function harness({ fetch = async () => config(), auth = {}, browser = {}, clock 
   const exported = {};
   vm.runInNewContext(source, {
     exports: exported, require: name => { assert.ok(name in adapters, name); return adapters[name]; },
-    URL, FormData, AbortController, __DEV__: true,
-    process: { env: { EXPO_PUBLIC_API_URL: 'https://api.example.invalid' } },
+    URL, FormData, AbortController, __DEV__: development,
+    process: { env: { EXPO_PUBLIC_API_URL: 'https://api.example.invalid', ...env } },
     console: { warn: (...values) => logs.push(values), log: (...values) => logs.push(values) },
     setTimeout: clock.setTimeout ?? ((fn, delay) => { const key = {}; timers.set(key, { fn, delay }); return key; }),
     clearTimeout: clock.clearTimeout ?? (key => timers.delete(key)),
@@ -173,4 +173,18 @@ test('only the configured callback can exchange a PKCE code', async () => {
   assert.equal(await h.api.signInWithGoogle(), true);
   assert.deepEqual(exchanged, ['private-test-code']);
   assert.deepEqual(h.logs, []);
+});
+
+
+test('isolated local mode wins over hosted env only in development', async () => {
+  const env = { EXPO_PUBLIC_API_URL: 'https://hosted.example.invalid', EXPO_PUBLIC_PEEKALO_LOCAL_TESTING: 'true' };
+  const local = harness({ env });
+  await local.api.getSharingClient();
+  assert.equal(local.calls[0][0], 'http://127.0.0.1:3101/api/shares/config');
+  const release = harness({ env, development: false });
+  await release.api.getSharingClient();
+  assert.equal(release.calls[0][0], 'https://hosted.example.invalid/api/shares/config');
+  const ordinary = harness({ env: { ...env, EXPO_PUBLIC_PEEKALO_LOCAL_TESTING: 'false' } });
+  await ordinary.api.getSharingClient();
+  assert.equal(ordinary.calls[0][0], 'https://hosted.example.invalid/api/shares/config');
 });

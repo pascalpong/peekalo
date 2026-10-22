@@ -10,7 +10,10 @@ export class SharingError extends Error {
 }
 
 export function resolveApiUrl(path: string) {
-  const base = process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
+  // Expo's development env module prefers .env.local over shell API values.
+  // A separate development-only flag selects the isolated test backend.
+  const localTesting = __DEV__ && process.env.EXPO_PUBLIC_PEEKALO_LOCAL_TESTING === 'true';
+  const base = localTesting ? 'http://127.0.0.1:3101' : process.env.EXPO_PUBLIC_API_URL?.replace(/\/+$/, '');
   if (!base) throw new SharingError('Sharing is not connected yet. Please try again after the server is configured.', 'not_configured');
   const url = new URL(base);
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && __DEV__)) {

@@ -18,6 +18,7 @@ if (mode === 'web') {
 } else {
   for (const key of Object.keys(env)) if (key.startsWith('SUPABASE_') || key === 'SHARE_TOKEN_SECRET') delete env[key];
   env.EXPO_PUBLIC_API_URL = 'http://127.0.0.1:3101';
+  env.EXPO_PUBLIC_PEEKALO_LOCAL_TESTING = 'true';
   // Keep --localhost reachable through Android's IPv4 USB reverse endpoint.
   env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --dns-result-order=ipv4first`.trim();
 }
