@@ -1,0 +1,83 @@
+.root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #090b0a;
+}
+
+.poster,
+.video {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.poster {
+  background-size: cover;
+  background-position: center;
+}
+
+.video {
+  opacity: 0;
+  transition: opacity 600ms ease;
+}
+
+.visible {
+  opacity: 1;
+}
+
+.control {
+  position: absolute;
+  right: clamp(1.25rem, 4vw, 4rem);
+  bottom: 1.5rem;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  min-height: 44px;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 999px;
+  background: rgb(8 11 9 / 84%);
+  color: #f5f6ed;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.control:hover:not(:disabled) {
+  background: #1b231c;
+  border-color: #d1ff65;
+}
+
+.control:focus-visible {
+  outline: 3px solid #d1ff65;
+  outline-offset: 4px;
+}
+
+.control:disabled {
+  cursor: default;
+}
+
+@media (max-width: 760px) {
+  .video {
+    object-position: 78% center;
+  }
+
+  .poster {
+    background-position: 78% center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video {
+    transition: none;
+  }
+}

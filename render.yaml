@@ -1,11 +1,13 @@
-# Deployment proposal only. Creating this service incurs the selected plan's cost.
-# Confirm the plan in Render before applying; no credentials belong in this file.
+# Free development preview only; retain Supabase for Auth, database and storage.
+# Use the two assigned public HTTPS origins, never Render private hostnames.
+# Keep collection closed and paid upgrades deferred.
 services:
   - type: web
     name: peekalo-dev
     runtime: docker
+    branch: codex/free-render-preview
     region: singapore
-    plan: 1c-2g
+    plan: free
     numInstances: 1
     dockerfilePath: ./Dockerfile
     dockerContext: .
@@ -23,3 +25,25 @@ services:
         sync: false
       - key: PUBLIC_APP_URL
         sync: false
+      - key: PUBLIC_SITE_URL
+        sync: false
+      - key: WAITLIST_ENABLED
+        value: "false"
+  - type: web
+    name: peekalo-site-dev
+    runtime: docker
+    branch: codex/free-render-preview
+    region: singapore
+    plan: free
+    numInstances: 1
+    dockerfilePath: ./apps/site/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: "off"
+    envVars:
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: PUBLIC_SITE_URL
+        sync: false
+      - key: WAITLIST_ENABLED
+        value: "false"

@@ -23,6 +23,7 @@
   "dependencies": {
     "@expo/vector-icons": "15.1.1",
     "@peekalo/contracts": "workspace:*",
+    "@peekalo/design": "workspace:*",
     "@peekalo/reveal": "workspace:*",
     "@supabase/supabase-js": "2.117.3",
     "expo": "55.0.31",

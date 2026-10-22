@@ -2,9 +2,10 @@ import AntDesign from '@expo/vector-icons/AntDesign';
 import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle } from '../lib/sharing-client';
-import { colors, Eyes } from './ui';
+import { colors, tokens } from './ui';
+import { BrandLogo } from './brand';
 
 type Props = {
   visible: boolean;
@@ -209,21 +210,23 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
 
   const close = () => { if (!busyRef.current) { setPassword(''); onClose(); } };
   return <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
+    {/* A native modal has its own window; measure its insets independently of the tab screen. */}
+    <SafeAreaProvider style={styles.safe}>
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={styles.header}><View style={styles.brand}><Eyes /><Text style={styles.brandText}>peekalo.</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" disabled={busy} onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.ink} /></Pressable>
+        <View style={styles.header}><BrandLogo />
+          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" disabled={busy} onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
           <Text style={styles.eyebrow}>{capture ? 'A MOMENT FOR SOMEONE' : 'YOUR PEEKALO ACCOUNT'}</Text>
           <Text style={styles.title}>{capture ? `Share your ${capture.kind}.` : 'A little closer.'}</Text>
           <Text style={styles.body}>{capture ? 'Your capture stays private. Choose a Peekalo recipient or create a single-use link.' : 'Sign in to receive and share moments on Peekalo.'}</Text>
-          {stage === 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.ink} /><Text style={styles.body}>Connecting to Peekalo…</Text></View>}
+          {stage === 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text style={styles.body}>Connecting to Peekalo…</Text></View>}
           {stage === 'unavailable' && <Action label="Try connection again" onPress={connect} disabled={busy} />}
           {stage === 'auth' && <View style={styles.section}>
             <Text style={styles.heading}>{signingUp ? 'Create your account' : capture ? 'Sign in to share' : 'Sign in to Peekalo'}</Text>
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={continueWithGoogle} style={({ pressed }) => [styles.google, (pressed || busy) && styles.dim]}>
-              <AntDesign name="google" size={20} color={colors.ink} /><Text style={styles.actionText}>Continue with Google</Text>
+              <AntDesign name="google" size={20} color={colors.text} /><Text style={[styles.actionText, styles.secondaryText]}>Continue with Google</Text>
             </Pressable>
             <Text style={styles.divider}>or use email</Text>
             <TextInput style={styles.input} accessibilityLabel="Email" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" autoComplete="email" editable={!busy} />
@@ -238,44 +241,46 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
           </View>}
           {stage === 'ready' && <View style={styles.section}>
             <Text style={styles.signedIn}>Signed in as @{username}</Text>
-            {capture ? <><View style={styles.option}><Feather name="link" size={25} color={colors.ink} /><Text style={styles.heading}>Create a private link</Text>
+            {capture ? <><View style={styles.option}><Feather name="link" size={25} color={colors.text} /><Text style={styles.heading}>Create a single-use link</Text>
               <Text style={styles.body}>The first person to deliberately reveal claims the link. They get ten seconds total. Anyone who receives the link can be that first viewer. Browsers can save revealed media.</Text>
-              <Action label={hasLink ? 'Share link' : 'Create & share link'} onPress={createLink} disabled={busy} />
+              <Action label={hasLink ? 'Share link' : 'Create a single-use link'} onPress={createLink} disabled={busy} />
               {hasLink && <Action secondary label="Revoke link" onPress={revokeLink} disabled={busy} />}
             </View>
-            <View style={styles.option}><Feather name="send" size={25} color={colors.ink} /><Text style={styles.heading}>Send on Peekalo</Text>
+            <View style={styles.option}><Feather name="send" size={25} color={colors.text} /><Text style={styles.heading}>Send on Peekalo</Text>
               <Text style={styles.body}>A new recipient must accept your request before viewing.</Text>
               <TextInput style={styles.input} accessibilityLabel="Recipient username" placeholder="@username" placeholderTextColor={colors.muted} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} maxLength={25} editable={!busy} />
               {lastRecipient && <Action secondary label={`Revoke @${lastRecipient} access`} onPress={revokeRecipient} disabled={busy} />}
               <Action label="Send to recipient" onPress={sendToRecipient} disabled={busy || !recipient.trim()} secondary />
             </View></> : <View style={styles.option}><Text style={styles.heading}>You’re ready, @{username}.</Text><Text style={styles.body}>Moments shared with you appear in Inbox.</Text><Action label="Done" onPress={close} disabled={busy} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></View>}
           </View>}
-          {busy && stage !== 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.ink} /><Text accessibilityLiveRegion="polite" style={styles.body}>{progress || 'Please wait…'}</Text></View>}
+          {busy && stage !== 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text accessibilityLiveRegion="polite" style={styles.body}>{progress || 'Please wait…'}</Text></View>}
           {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
           {!!notice && <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text>}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+    </SafeAreaProvider>
   </Modal>;
 }
 
 function Action({ label, onPress, disabled, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.action, secondary && styles.secondary, (pressed || disabled) && styles.dim]}><Text style={styles.actionText}>{label}</Text><Feather name="arrow-up-right" size={19} color={colors.ink} /></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.action, secondary && styles.secondary, (pressed || disabled) && styles.dim]}><Text style={[styles.actionText, secondary && styles.secondaryText]}>{label}</Text><Feather name="arrow-up-right" size={19} color={secondary ? colors.text : colors.onAccent} /></Pressable>;
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.paper }, flex: { flex: 1 },
-  header: { paddingHorizontal: 24, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.line },
-  brand: { flexDirection: 'row', gap: 8, alignItems: 'center' }, brandText: { color: colors.ink, fontSize: 28, fontWeight: '800', letterSpacing: -1.7 }, close: { padding: 12 },
+  safe: { flex: 1, backgroundColor: colors.background }, flex: { flex: 1 },
+  header: { paddingHorizontal: 24, paddingVertical: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.border },
+  close: { padding: 12 },
   content: { padding: 24, paddingBottom: 48, width: '100%', maxWidth: 540, alignSelf: 'center', gap: 16 },
-  eyebrow: { color: '#667650', fontSize: 10, letterSpacing: 1.5, fontWeight: '600' }, title: { color: colors.ink, fontSize: 39, lineHeight: 43, letterSpacing: -1.8, fontWeight: '500' },
-  body: { color: colors.muted, fontSize: 14, lineHeight: 22, flexShrink: 1 }, heading: { color: colors.ink, fontSize: 20, fontWeight: '600', letterSpacing: -0.6 },
-  section: { gap: 14, marginTop: 6 }, signedIn: { color: colors.muted, fontSize: 12 }, option: { borderWidth: 1, borderColor: colors.line, borderRadius: 22, padding: 20, gap: 14 },
-  input: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 14, minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, color: colors.ink, fontSize: 16 },
-  action: { minHeight: 54, borderRadius: 28, backgroundColor: colors.lime, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
-  actionText: { color: colors.ink, fontSize: 14, fontWeight: '600', flexShrink: 1 }, secondary: { backgroundColor: colors.soft }, dim: { opacity: 0.5 },
-  google: { minHeight: 54, borderRadius: 28, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
+  eyebrow: { color: colors.accent, fontSize: 10, letterSpacing: 1.5, fontWeight: '600' }, title: { color: colors.text, fontSize: 39, lineHeight: 43, letterSpacing: -1.8, fontFamily: tokens.font.display },
+  body: { color: colors.muted, fontSize: 14, lineHeight: 22, flexShrink: 1 }, heading: { color: colors.text, fontSize: 20, fontFamily: tokens.font.display, letterSpacing: -0.6 },
+  section: { gap: 14, marginTop: 6 }, signedIn: { color: colors.muted, fontSize: 12 }, option: { borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 20, gap: 14 },
+  input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 14, minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, color: colors.text, fontSize: 16 },
+  action: { minHeight: 54, borderRadius: 28, backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  secondaryText: { color: colors.text },
+  actionText: { color: colors.onAccent, fontSize: 14, fontWeight: '600', flexShrink: 1 }, secondary: { backgroundColor: colors.surface }, dim: { opacity: 0.5 },
+  google: { minHeight: 54, borderRadius: 28, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
   divider: { color: colors.muted, fontSize: 12, textAlign: 'center' },
-  loading: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }, textButton: { paddingVertical: 10 }, textButtonLabel: { textAlign: 'center', color: colors.ink, fontSize: 13 },
-  error: { color: '#A2382D', lineHeight: 22, fontSize: 14, backgroundColor: '#F8EBE7', padding: 16, borderRadius: 14 }, notice: { color: colors.ink, lineHeight: 22, fontSize: 14, backgroundColor: colors.soft, padding: 16, borderRadius: 14 },
+  loading: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }, textButton: { paddingVertical: 10 }, textButtonLabel: { textAlign: 'center', color: colors.text, fontSize: 13 },
+  error: { color: colors.danger, lineHeight: 22, fontSize: 14, backgroundColor: colors.dangerSurface, padding: 16, borderRadius: 14 }, notice: { color: colors.text, lineHeight: 22, fontSize: 14, backgroundColor: colors.surface, padding: 16, borderRadius: 14 },
 });

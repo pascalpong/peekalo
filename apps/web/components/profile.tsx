@@ -31,7 +31,7 @@ export function Profile() {
         <section className="moments-section" aria-labelledby="moments-title">
           <div className="section-heading">
             <h2 id="moments-title">A little of lately <span>03</span></h2>
-            <span className="hidden-label"><Icon name="eye" />Hidden for now</span>
+            <span className="hidden-label"><Icon name="eye" />Hidden by default</span>
           </div>
           <div className="moment-grid">
             {moments.map((moment) => (

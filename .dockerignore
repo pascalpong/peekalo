@@ -9,11 +9,17 @@
 !apps/
 !apps/web/
 !apps/web/**
+!apps/site/
+!apps/site/**
 !packages/
 !packages/contracts/
 !packages/contracts/**
 !packages/reveal/
 !packages/reveal/**
+!packages/design/
+!packages/design/**
+!packages/web-ui/
+!packages/web-ui/**
 !scripts/
 !scripts/check-hosting-runtime.mjs
 **/node_modules

@@ -24,7 +24,7 @@ export default async function SharedPage({ params }: { params: Promise<{ token: 
               <p className="viewer-lede">A moment, held for you.</p>
               <div className="viewing-rules">
                 <p><Icon name="eye" /><span><strong>Hold to reveal.</strong><br />Release to hide the moment.</span></p>
-                <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds, total.</strong><br />Across holds, for one viewer.</span></p>
+                <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong><br />Across holds, for one viewer.</span></p>
                 <p><Icon name="lock" /><span><strong>Only the first viewer.</strong><br />Revealing claims this link in this browser.</span></p>
               </div>
               <p className="capture-note">Browser viewers may save or capture revealed content.</p>
@@ -65,7 +65,7 @@ export default async function SharedPage({ params }: { params: Promise<{ token: 
             <p className="viewer-lede">Some moments are made to be seen, then let go.</p>
             <div className="viewing-rules">
               <p><Icon name="eye" /><span><strong>Hold to reveal.</strong><br />Release to hide the moment.</span></p>
-              <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds, total.</strong><br />Across holds, for one viewer.</span></p>
+              <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong><br />Across holds, for one viewer.</span></p>
             </div>
             <details className="demo-details">
               <summary>About this demo<Icon name="arrow" /></summary>

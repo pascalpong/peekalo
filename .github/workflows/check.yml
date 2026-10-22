@@ -27,3 +27,14 @@ jobs:
           node-version-file: .node-version
       - run: docker build --tag peekalo-hosting:local .
       - run: node scripts/test-hosting-container.mjs
+      - run: PEEKALO_TEST_PROFILE=free node scripts/test-hosting-container.mjs
+  site-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: docker build -f apps/site/Dockerfile --tag peekalo-site:local .
+      - run: node scripts/test-site-container.mjs
+      - run: PEEKALO_TEST_PROFILE=free node scripts/test-site-container.mjs

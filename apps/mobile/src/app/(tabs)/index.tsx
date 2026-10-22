@@ -7,7 +7,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, Eyes } from '../../components/ui';
+import { colors, tokens } from '../../components/ui';
+import { BrandLogo } from '../../components/brand';
 import { createPhotoSession } from '../../lib/photo-session';
 import { createVideoSession } from '../../lib/video-session';
 import { cropPhoto916 } from '../../lib/crop-photo';
@@ -197,8 +198,6 @@ export default function CameraScreen() {
       return cropPhoto916(photo);
     });
   };
-  // Keep Android's live preview on the plain-logo fallback until blend is device-verified.
-  const blendSupported = Platform.OS !== 'android' || reviewing;
   const controlsBottom = 76 + insets.bottom + 24;
 
   return <View style={styles.screen}>
@@ -225,10 +224,8 @@ export default function CameraScreen() {
       {reviewingVideo && active && focused && !sharing && video.video && <VideoReview key={video.video.uri} uri={video.video.uri} />}
     </View>
 
-    <View pointerEvents="none" style={[styles.logoPosition, { top: insets.top + 14, left: Math.max(insets.left, 24) }, blendSupported && styles.blendLogo]}>
-      <View accessible accessibilityLabel="Peekalo" style={styles.brand}>
-        <Eyes inverse /><Text style={styles.brandName}>peekalo.</Text>
-      </View>
+    <View pointerEvents="none" style={[styles.logoPosition, { top: insets.top + 14, left: Math.max(insets.left, 24) }]}>
+      <BrandLogo />
     </View>
 
     {reviewing ? <>
@@ -238,23 +235,23 @@ export default function CameraScreen() {
       <View style={[styles.reviewControls, { bottom: controlsBottom }]}>
         <Text style={styles.reviewHint}>Ready for a little reveal?</Text>
         <Pressable accessibilityRole="button" accessibilityLabel="Share this moment" onPress={openShare} style={[styles.primaryButton, styles.shareButton]}>
-          <Feather name="send" size={20} color={colors.ink} /><Text style={styles.darkButtonText}>Share moment</Text>
+          <Feather name="send" size={20} color={colors.onAccent} /><Text style={styles.darkButtonText}>Share moment</Text>
         </Pressable>
         <View style={styles.reviewActions}>
           <Pressable accessibilityRole="button" onPress={discard} style={styles.secondaryButton}>
             <Feather name="x" size={18} color="#fff" /><Text style={styles.lightButtonText}>Discard</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={discard} style={styles.primaryButton}>
-            <Feather name="rotate-ccw" size={18} color={colors.ink} /><Text style={styles.darkButtonText}>Retake</Text>
+            <Feather name="rotate-ccw" size={18} color={colors.onAccent} /><Text style={styles.darkButtonText}>Retake</Text>
           </Pressable>
         </View>
       </View>
     </> : <>
       {!showCamera && <View style={[styles.permissionState, { paddingTop: insets.top + 82, paddingBottom: controlsBottom + 108 }]}>
-        <View style={styles.cameraGlyph}><Feather name="camera" size={38} color={colors.lime} /></View>
+        <View style={styles.cameraGlyph}><Feather name="camera" size={38} color={colors.accent} /></View>
         <Text accessibilityRole="header" style={styles.stateTitle}>{!physicalPhone ? 'Camera needs a real phone' : cameraFailed ? 'Camera couldn’t start' : 'Let’s open your camera'}</Text>
         <Text style={styles.stateText}>{!physicalPhone ? 'Open Peekalo on your phone to take a photo.' : cameraFailed ? 'Try opening the camera again.' : 'Allow camera access to capture a moment. No gallery imports.'}</Text>
-        {physicalPhone && !permission && <ActivityIndicator accessibilityLabel="Checking camera permission" color={colors.lime} />}
+        {physicalPhone && !permission && <ActivityIndicator accessibilityLabel="Checking camera permission" color={colors.accent} />}
         {physicalPhone && permission && !permission.granted && <Pressable accessibilityRole="button" style={styles.primaryButton}
           onPress={() => { void (permission.canAskAgain ? askForCamera() : openSettings()); }}>
           <Text style={styles.darkButtonText}>{permission.canAskAgain ? 'Enable camera' : 'Open camera settings'}</Text>
@@ -282,7 +279,7 @@ export default function CameraScreen() {
             onPressOut={() => { if (longPress.current) videoSession.release(); }}
             onPress={() => { if (!longPress.current) takePhoto(); }}
             style={({ pressed }) => [styles.shutter, !canCapture && !videoBusy && styles.disabledShutter, videoBusy && styles.videoShutter, pressed && styles.pressedShutter]}>
-            {capturing || video.status === 'preparing' || video.status === 'stopping' ? <ActivityIndicator color={colors.ink} accessibilityLabel="Preparing capture" /> : <View style={[styles.shutterCore, video.status === 'recording' && styles.recordingCore]} />}
+            {capturing || video.status === 'preparing' || video.status === 'stopping' ? <ActivityIndicator color={colors.onAccent} accessibilityLabel="Preparing capture" /> : <View style={[styles.shutterCore, video.status === 'recording' && styles.recordingCore]} />}
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Switch camera" accessibilityState={{ disabled: !canCapture }} disabled={!canCapture}
             style={styles.flipButton} onPress={() => { setReady(false); setFacing(current => current === 'back' ? 'front' : 'back'); }}>
@@ -300,21 +297,18 @@ export default function CameraScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#101812' },
+  screen: { flex: 1, backgroundColor: colors.background },
   frame: { position: 'absolute', overflow: 'hidden', backgroundColor: '#000' },
   preview: { flex: 1 },
   videoShutter: { borderColor: '#FF5E63' },
   recordingCore: { backgroundColor: '#FF5E63', width: 38, height: 38, borderRadius: 10 },
   recordingMode: { color: '#fff', backgroundColor: '#A6222CDD' },
-  settingsText: { color: '#D9F69D', fontSize: 13, paddingTop: 12, fontWeight: '600' },
-  logoPosition: { position: 'absolute', zIndex: 2 },
-  blendLogo: { mixBlendMode: 'difference' },
-  brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandName: { color: '#fff', fontSize: 28, fontWeight: '800', letterSpacing: -1.7, textShadowColor: '#00000066', textShadowRadius: 4 },
+  settingsText: { color: colors.accent, fontSize: 13, paddingTop: 12, fontWeight: '600' },
+  logoPosition: { position: 'absolute', zIndex: 2, backgroundColor: '#080a09b3', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10 },
   permissionState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 18 },
   cameraGlyph: { height: 76, width: 76, borderRadius: 38, backgroundColor: '#FFFFFF12', alignItems: 'center', justifyContent: 'center' },
-  stateTitle: { fontSize: 22, fontWeight: '600', color: '#fff', textAlign: 'center' },
-  stateText: { fontSize: 14, lineHeight: 22, color: '#CFD5C9', textAlign: 'center', maxWidth: 280 },
+  stateTitle: { fontSize: 22, fontFamily: tokens.font.display, color: colors.text, textAlign: 'center' },
+  stateText: { fontSize: 14, lineHeight: 22, color: colors.muted, textAlign: 'center', maxWidth: 280 },
   captureControls: { position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 15 },
   photoMode: { color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 2, backgroundColor: '#00000066', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14 },
   shutterRow: { width: '100%', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 36 },
@@ -330,10 +324,10 @@ const styles = StyleSheet.create({
   reviewHint: { color: '#fff', fontSize: 12, textAlign: 'center', backgroundColor: '#00000099', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
   reviewActions: { flexDirection: 'row', gap: 12 },
   shareButton: { alignSelf: 'stretch', minHeight: 56 },
-  primaryButton: { minHeight: 50, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28, backgroundColor: colors.lime, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
+  primaryButton: { minHeight: 50, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28, backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
   secondaryButton: { minHeight: 50, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28, backgroundColor: '#00000099', borderWidth: 1, borderColor: '#FFFFFF80', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
   lightButtonText: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  darkButtonText: { color: colors.ink, fontSize: 14, fontWeight: '600' },
+  darkButtonText: { color: colors.onAccent, fontSize: 14, fontWeight: '600' },
   errorBanner: { position: 'absolute', left: 24, right: 24, backgroundColor: '#3F241FEE', borderRadius: 16, padding: 14 },
   errorText: { color: '#fff', fontSize: 13, lineHeight: 19, textAlign: 'center' },
 });

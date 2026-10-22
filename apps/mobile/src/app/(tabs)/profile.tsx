@@ -4,7 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { ShareCapture } from '../../components/share-capture';
-import { Button, colors, Eyebrow, Eyes, MysteryArt, Screen, typography } from '../../components/ui';
+import { Button, colors, Eyebrow, Eyes, MysteryArt, Screen, tokens, typography } from '../../components/ui';
 import { apiRequest, getSharingClient } from '../../lib/sharing-client';
 
 type Account =
@@ -45,7 +45,7 @@ export default function ProfileScreen() {
         <Text accessibilityRole="header" style={styles.name} numberOfLines={1} adjustsFontSizeToFit>{title}</Text>
         <Text style={typography.small} numberOfLines={2}>{subtitle}</Text>
       </View>
-      {account.state === 'loading' && <ActivityIndicator color={colors.ink} accessibilityLabel="Loading your account" />}
+      {account.state === 'loading' && <ActivityIndicator color={colors.text} accessibilityLabel="Loading your account" />}
     </View>
     <View style={styles.actions}>
       {account.state === 'unavailable'
@@ -78,21 +78,21 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   identity: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 24 },
-  avatar: { width: 85, height: 85, borderRadius: 44, backgroundColor: colors.lime, alignItems: 'center', justifyContent: 'center' },
-  initial: { fontSize: 38, fontWeight: '600', color: colors.ink },
+  avatar: { width: 85, height: 85, borderRadius: 44, backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  initial: { fontSize: 38, fontFamily: tokens.font.display, color: colors.accent },
   nameBlock: { flex: 1, gap: 5 },
-  name: { fontSize: 32, letterSpacing: -1.4, fontWeight: '500', color: colors.ink },
+  name: { fontSize: tokens.type.title, letterSpacing: -1.4, fontFamily: tokens.font.display, color: colors.text },
   actions: { marginTop: 22, marginBottom: 30 },
-  demoTag: { fontSize: 9, letterSpacing: 1, color: '#68765B' },
+  demoTag: { fontSize: 9, letterSpacing: 1, color: colors.accent },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 17 },
   hiddenLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   hiddenText: { color: colors.muted, fontSize: 10 },
-  empty: { borderWidth: 1, borderColor: colors.line, borderRadius: 22, padding: 20, gap: 16, marginBottom: 30 },
+  empty: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 20, gap: 16, marginBottom: 30 },
   center: { textAlign: 'center' },
   sampleButton: { marginTop: 14 },
-  limits: { marginTop: 26, flexDirection: 'row', paddingVertical: 22, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.line },
+  limits: { marginTop: 26, flexDirection: 'row', paddingVertical: 22, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border },
   rule: { flex: 1, gap: 6, alignItems: 'center' },
-  number: { fontSize: 25, color: colors.ink, letterSpacing: -1, fontWeight: '500' },
+  number: { fontSize: 25, color: colors.text, letterSpacing: -1, fontFamily: tokens.font.display },
   ruleLabel: { fontSize: 9, color: colors.muted, textAlign: 'center' },
   note: { marginTop: 16, fontSize: 10, lineHeight: 17, color: colors.muted },
 });

@@ -42,22 +42,22 @@ export default function InboxScreen() {
     <Eyebrow>For your eyes</Eyebrow>
     <Text accessibilityRole="header" style={[typography.title, styles.title]}>{selected ? `From @${selected.senderUsername}` : 'Your little\nmoments.'}</Text>
     {selected ? <>
-      <Pressable accessibilityRole="button" style={styles.back} onPress={() => setSelected(null)}><Feather name="arrow-left" size={18} color={colors.ink} /><Text>Back to inbox</Text></Pressable>
+      <Pressable accessibilityRole="button" style={styles.back} onPress={() => setSelected(null)}><Feather name="arrow-left" size={18} color={colors.text} /><Text style={typography.body}>Back to inbox</Text></Pressable>
       <ReceivedMoment key={selected.postId} postId={selected.postId} kind={selected.kind} />
     </> : <>
       <Text style={typography.body}>Only moments shared with your account appear here.</Text>
       <View style={styles.actions}>
         <Button secondary label={signedIn ? 'Your account' : 'Sign in'} icon="user" onPress={() => setAccount(true)} />
-        <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Feather name="refresh-cw" size={21} color={colors.ink} /></Pressable>
+        <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Feather name="refresh-cw" size={21} color={colors.text} /></Pressable>
       </View>
-      {busy && <ActivityIndicator color={colors.ink} accessibilityLabel="Loading inbox" />}
+      {busy && <ActivityIndicator color={colors.text} accessibilityLabel="Loading inbox" />}
       {!busy && items.length === 0 && <View style={styles.empty}>
-        <Feather name="message-circle" size={40} color={colors.ink} />
+        <Feather name="message-circle" size={40} color={colors.text} />
         <Text style={typography.section}>Quiet, for now.</Text>
         <Text style={[typography.body, styles.center]}>{signedIn ? 'Ask a friend to share a moment with your username.' : 'Sign in to receive private moments and accept requests.'}</Text>
       </View>}
       {items.map(item => <View key={item.postId} style={styles.item}>
-        <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.ink} />
+        <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.text} />
           <View style={styles.sender}><Text style={typography.section}>@{item.senderUsername}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : 'Hidden · 10 seconds total'}</Text></View></View>
         <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
           if (item.requestState === 'pending') void accept(item); else setSelected(item);
@@ -73,7 +73,7 @@ export default function InboxScreen() {
 const styles = StyleSheet.create({
   title: { marginTop: 14, marginBottom: 18, fontSize: 36, lineHeight: 41 }, actions: { marginTop: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16 },
   refresh: { minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' }, empty: { paddingVertical: 42, paddingHorizontal: 20, alignItems: 'center', gap: 16 },
-  center: { textAlign: 'center' }, item: { paddingVertical: 20, borderBottomWidth: 1, borderColor: colors.line, gap: 16, marginBottom: 16 },
+  center: { textAlign: 'center' }, item: { paddingVertical: 20, borderBottomWidth: 1, borderColor: colors.border, gap: 16, marginBottom: 16 },
   itemMeta: { flexDirection: 'row', alignItems: 'center', gap: 14 }, sender: { flex: 1, gap: 4 }, footer: { color: colors.muted, fontSize: 10, textAlign: 'center', lineHeight: 17, marginTop: 20 },
-  back: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 16, marginBottom: 14 }, error: { color: '#9A352E', marginVertical: 16, lineHeight: 21 },
+  back: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 16, marginBottom: 14 }, error: { color: colors.danger, marginVertical: 16, lineHeight: 21 },
 });

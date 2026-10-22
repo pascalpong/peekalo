@@ -83,8 +83,8 @@ export function SampleReveal() {
       <img src="/demo/morning-hidden.png" alt="" draggable={false} className="sample-image" />
       <span className="sample-cover" aria-hidden="true">
         <span className="peek-circle"><Icon name={exhausted ? 'lock' : 'eye'} /></span>
-        <span className="sample-prompt">{failed ? 'Sample unavailable' : exhausted ? 'A moment, remembered.' : 'Hold for a little glimpse.'}</span>
-        <span className="sample-hint">{failed ? 'Refresh to try again.' : exhausted ? 'Your viewing time is used up.' : 'Release to hide · 10 seconds total'}</span>
+        <span className="sample-prompt">{failed ? 'Sample unavailable' : exhausted ? 'A moment, remembered.' : 'Hold to reveal'}</span>
+        <span className="sample-hint">{failed ? 'Refresh to try again.' : exhausted ? 'Your viewing time is used up.' : 'Release to hide · Up to 10 seconds total'}</span>
       </span>
     </button>
     {revealed && <FullscreenReveal seconds={seconds} onDismiss={stop}>

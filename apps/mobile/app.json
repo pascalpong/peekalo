@@ -6,7 +6,7 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "platforms": [
       "ios",
       "android"
@@ -19,7 +19,7 @@
       "package": "com.peekalo.preview",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#D9F69D"
+        "backgroundColor": "#d4fa71"
       }
     },
     "plugins": [

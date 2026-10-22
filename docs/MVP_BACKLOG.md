@@ -4,7 +4,10 @@ Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished e
 
 ## Milestone 1: prove the central behavior
 
-- [ ] HOST-01: deploy the portable Next.js/Sharp/FFmpeg container to Render and connect the native API origin. Render is selected; source is published and GitHub's full checks/native AMD64 container build/smoke pass. Linux ARM64 and all 64 live Supabase assertions also pass locally. User deferred paid provisioning; no Peekalo Render service exists. Public-host and native-origin evidence remain pending on the board.
+- [x] WEB-SPLIT-01: D-23 separate marketing website (`apps/site`, port 3100) and product web app/API (`apps/web`, port 3101), shared `@peekalo/design`/`@peekalo/web-ui`, configured cross-app links and compatible redirects. Locked install, workspace checks, both production builds/native JS exports, origin/proxy regression and production browser/HTTP checks pass. Both Linux ARM64 standalone container build/smoke checks pass; hosted CI/AMD64 evidence remains pending on the build board. Keep origins configured on both servers, waitlist closed and paid hosting deferred.
+- [x] BRAND-01: D-22 canonical logo artwork across native/web, including full wordmark, camera/account/footer/reveal, and common launcher/favicon mark. Generated-asset checks, lint/types, exports/build, production browser and running iOS simulator checks pass. Native launcher binary rollout and physical-device/live-camera contrast remain pending separately.
+- [x] FND-02: apply the D-21 shared dark/lime design foundation through `@peekalo/design` to native Inbox/Profile/account/sample surfaces and the web homepage/profile/viewer. Workspace checks, native exports, web builds, production browser layouts and rebuilt iOS simulator screens pass. Modal safe-area correction also passes mobile lint/types and visual checking. Physical-device appearance and live native account/sharing checks remain pending separately on the board.
+- [ ] HOST-01: deploy the portable Next.js/Sharp/FFmpeg container to Render and connect the native API origin. Render is selected; source is published and GitHub's full checks/native AMD64 container build/smoke pass. Linux ARM64 and all 64 live Supabase assertions also pass locally. User selected Free preview preparation on 22 October; paid provisioning stays deferred. Current preview deployment/resource verification is tracked on the board. Public-host and native-origin evidence remain pending on the board.
 - [ ] Bound upload admission before body buffering, add upload read deadlines and recover stale `uploading` reservations after process interruption before inviting users.
 - [x] Implement PHOTO-01 local fixture reveal on mobile/web: hold/release/cancel, cumulative ten-second allowance, countdown/exhaustion, keyboard and one-second accessible alternative. Runtime-only demo; server/device criteria below remain separate.
 
@@ -101,6 +104,8 @@ Meaningful backend/security checks:
 - [ ] Empty, loading, processing, failed, expired, revoked and exhausted states.
 
 ## Milestone 4: beta and release
+
+- [ ] MKT-01: publish the prelaunch marketing site after review. Dark landing page, original ten-second cinematic hero, labelled local reveal demo, privacy notice and consent-based waitlist integration are implemented locally in the separate `apps/site` website (D-23); profiles/private viewing remain in `apps/web`. The original marketing work was implemented on 20 October; MKT-02 records that motion evidence. Apply the new waitlist migration, verify a real Supabase HTTP insert/duplicate, connect a working private contact/removal route using branded email after domain choice, update the notice and enable collection only after those checks. Public hosting remains deferred under HOST-01.
 
 - [ ] Filtering/moderation queue, restricted operator access and published contact.
 - [ ] Report post/comment/message/user; responses and takedowns actually work.

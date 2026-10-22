@@ -38,6 +38,9 @@ importers:
       '@peekalo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@peekalo/design':
+        specifier: workspace:*
+        version: link:../../packages/design
       '@peekalo/reveal':
         specifier: workspace:*
         version: link:../../packages/reveal
@@ -121,14 +124,63 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  apps/site:
+    dependencies:
+      '@peekalo/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@peekalo/design':
+        specifier: workspace:*
+        version: link:../../packages/design
+      '@peekalo/reveal':
+        specifier: workspace:*
+        version: link:../../packages/reveal
+      '@peekalo/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
+      next:
+        specifier: 16.4.1
+        version: 16.4.1(@babel/core@7.29.7(supports-color@8.1.1))(@types/node@24.10.1)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
+      react:
+        specifier: 19.2.0
+        version: 19.2.0
+      react-dom:
+        specifier: 19.2.0
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@next/eslint-plugin-next':
+        specifier: 16.4.1
+        version: 16.4.1(eslint@10.12.0(supports-color@8.1.1))
+      '@types/node':
+        specifier: 24.10.1
+        version: 24.10.1
+      '@types/react':
+        specifier: 19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.18)
+      eslint:
+        specifier: 10.12.0
+        version: 10.12.0(supports-color@8.1.1)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   apps/web:
     dependencies:
       '@peekalo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@peekalo/design':
+        specifier: workspace:*
+        version: link:../../packages/design
       '@peekalo/reveal':
         specifier: workspace:*
         version: link:../../packages/reveal
+      '@peekalo/web-ui':
+        specifier: workspace:*
+        version: link:../../packages/web-ui
       '@supabase/supabase-js':
         specifier: 2.117.3
         version: 2.117.3
@@ -170,8 +222,36 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
 
+  packages/design:
+    devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
   packages/reveal:
     devDependencies:
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
+  packages/web-ui:
+    dependencies:
+      '@peekalo/design':
+        specifier: workspace:*
+        version: link:../design
+      react:
+        specifier: 19.2.0
+        version: 19.2.0
+      react-dom:
+        specifier: 19.2.0
+        version: 19.2.0(react@19.2.0)
+    devDependencies:
+      '@types/react':
+        specifier: 19.2.18
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: 19.2.3
+        version: 19.2.3(@types/react@19.2.18)
       typescript:
         specifier: 5.9.3
         version: 5.9.3

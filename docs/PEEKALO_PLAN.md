@@ -4,9 +4,11 @@ Prepared 15 October 2026. Status: FND-01 mobile/web foundation, local photo/vide
 
 ## 1. Recommendation
 
-Build Peekalo as a camera-first sharing app with Snapchat as the main product reference: take a photo or record a video up to ten seconds, review it, then send to chosen accounts or create a single-use external link. Use one React Native + Expo application for iOS and Android, a small Next.js web viewer, and one shared Supabase backend. Start with capture and reveal/privacy, then add comments and chat. Profiles and blurred media lists support sharing rather than leading the experience.
+Build Peekalo as a camera-first sharing app with Snapchat as the main product reference: take a photo or record a video up to ten seconds, review it, then send to chosen accounts or create a single-use external link. Use one React Native + Expo application for iOS and Android, a Next.js product web app, a separate Next.js marketing website, and one shared Supabase backend. Start with capture and reveal/privacy, then add comments and chat. Profiles and blurred media lists support sharing rather than leading the experience.
 
 Core flow: **Camera -> photo or <=10-second video -> review/retake -> send to accounts or create link -> recipient sees blurred media -> hold to reveal.**
+
+The native app, marketing homepage, public profile and shared viewer use the D-21 shared design foundation in [DECISIONS.md](DECISIONS.md). `@peekalo/design` provides semantic values, canonical logo artwork and the licensed display font to all three applications. D-23 separates `apps/site` (marketing) and `apps/web` (product/API); `@peekalo/web-ui` shares browser brand/icons, reveal overlay and base CSS. WEB-SPLIT-01 records the split; verification is tracked on the build board. Layouts remain platform-specific; the same product language and visual identity carry through capture, sharing and viewing. FND-02 tracks implementation and visual evidence.
 
 The product promise should be: **posts stay hidden until an authorized viewer reveals them; selected app recipients get up to ten seconds total per post; an anonymous external link can be claimed by only one viewer for up to ten seconds; native apps add capture protection where available.** Do not promise that revealed content cannot be saved, or that a ten-second allowance destroys a recipient's copy.
 
@@ -19,14 +21,14 @@ Confirmed by the user:
 - Snapchat-style photo/video capture and recipient sharing, extended with external links; received/profile media stays hidden or blurred by default.
 - Shared photos/videos originate only from the in-app camera; no gallery, photo-library or file imports. Captures still upload to private backend storage for processing and sharing.
 - Bottom navigation is Inbox on the left, a prominent Camera button in the center, and Profile on the right. Tapping Camera opens the in-app camera.
-- Camera preview and capture review share a centered portrait 9:16 frame fitted to the screen; taller screens retain dark extra space instead of changing the visible crop. Center-crop captured photos to exact 9:16. Keep the logo fixed at the top, with difference blend where reliable and a plain readable fallback where native composition cannot support it. The center navigation button stays unchanged.
+- Camera preview and capture review share a centered portrait 9:16 frame fitted to the screen; taller screens retain dark extra space instead of changing the visible crop. Center-crop captured photos to exact 9:16. Keep D-22's canonical logo fixed at the top on a subtle dark backing for consistent colors/contrast. The center navigation button stays unchanged.
 - Tap the shutter for a photo; hold for 300 ms to start video, then release to stop. Record at most ten seconds. The first hold requests microphone access when needed; hold again after granting it.
 - Photos and short videos, with a maximum video duration of ten seconds.
 - An initial upload limit of three; the exact meaning is still a planning assumption below.
 - Press and hold to reveal. **Each person gets ten seconds total per post across all holds**, rather than a fresh ten seconds on every hold.
 - Share a post by link; open it in the app when possible or in a web viewer.
 - Comments and chat belong in the mobile apps.
-- Public-facing web product is limited to profiles and shared-media viewing.
+- Product web app is limited to profiles and shared-media viewing. The separate website carries the prelaunch marketing homepage and consent-based early-access list (D-20/D-23).
 - Capture and recording protection must be investigated and implemented to the extent the platforms support it.
 - Web links allow anonymous visitors, without sign-in.
 - In-app sharing targets selected recipient accounts, like Snapchat; a follower relationship alone must not grant reveal access.
@@ -89,7 +91,7 @@ Open the signed-in app on Camera. Bottom navigation places Inbox on the left, a 
 
 Comments are available to the owner and selected app recipients. Anonymous link visitors cannot read or write comments. Text/captions can themselves describe media; do not treat them as hidden by the image timer. The app can keep the discussion accessible after a recipient's media allowance is exhausted.
 
-Web also needs small privacy, terms, support, deletion, and domain-association endpoints. These support distribution and account control rather than adding a full web social app. Google requires a usable external deletion resource even when the app has in-app deletion. [Google deletion policy](https://support.google.com/googleplay/android-developer/answer/13327111?hl=en)
+The separate marketing website in `apps/site` contains the D-20 landing page, privacy notice and early-access list. The product app in `apps/web` retains profiles, shared viewing and the backend; its entry links to explicitly labelled demos. Collection stays closed until storage and a private contact/removal route are connected. Web needs small privacy, terms, support, deletion, and domain-association endpoints. These support distribution and account control rather than adding a full web social app. Google requires a usable external deletion resource even when the app has in-app deletion. [Google deletion policy](https://support.google.com/googleplay/android-developer/answer/13327111?hl=en)
 
 ## 5. Core flows
 
@@ -162,12 +164,14 @@ Use iOS Universal Links and Android App Links, including domain association file
 | Part | Choice and reason |
 | --- | --- |
 | Mobile | React Native, Expo, TypeScript and Expo Router; one app codebase with platform-specific capture/lifecycle behavior. |
-| Web | Next.js/React; small profile/viewer UI and server routes for reveal, links, and media delivery. |
+| Product web app | `apps/web`: Next.js/React product entry, profile/viewer UI and existing server routes for reveal, links and media delivery; local port 3101. |
+| Marketing website | `apps/site`: separate Next.js build with landing page, brand motion, privacy notice and bounded waitlist-only proxy; local port 3100. |
+| Shared foundation | `@peekalo/design` owns tokens, font and canonical artwork; `@peekalo/web-ui` owns common browser brand/icons, reveal overlay, base CSS and origin validation. |
 | Identity/database | Supabase Auth and Postgres; verified native accounts, random guest browser identities, transactional quotas and row-level security. |
 | Storage | Private staging and normalized-media buckets; separately generated safe previews with explicit audience rules. |
 | Processing | One trusted container worker using image processing and FFmpeg; a Postgres job table initially, with retries and resource/time limits. |
 | Realtime | Supabase private channels for notifications of durable chat/comment changes. |
-| Hosting | The user selected Render for the combined web/API/Sharp/FFmpeg development container, retaining Supabase. HOST-01 targets one Singapore service. Stable HTTPS deployment and hosted runtime/range-streaming evidence remain pending; a separate durable worker stays future work. |
+| Hosting | The user selected Render for the combined web/API/Sharp/FFmpeg development container, retaining Supabase. HOST-01 now prepares separate Free Singapore product/API/media and marketing services for testing (22 October); the earlier paid proposal remains deferred. Stable HTTPS deployment and hosted runtime/range-streaming evidence remain pending; a separate durable worker stays future work. |
 | Notifications | Generic push notifications after the core chat works; no clear media, sensitive comment text, or message bodies in lock-screen notifications by default. |
 
 Expo development builds allow native libraries/configuration and are the recommended release-development path; use them for privacy verification rather than treating Expo Go as proof of production behavior. [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/)
@@ -180,13 +184,19 @@ Proposed structure after planning is accepted:
 
 ```text
 apps/mobile/          Expo iOS/Android application
-apps/web/             Profiles, viewer, support pages, API/media routes
+apps/site/            Marketing, privacy notice, waitlist-only proxy
+apps/web/             Product entry, profiles, viewer, API/media routes
+packages/design/      Shared tokens, font and canonical brand artwork
+packages/web-ui/      Common browser UI adapters and origin validation
+packages/reveal/      Local reveal allowance controller
 packages/contracts/   Shared validation, API types, limits
 supabase/migrations/  Schema, RLS, quota/reveal transactions
 services/media/       Trusted processing worker
 docs/                 Product, privacy, decisions, release evidence
 AGENTS.md             Concise project instructions for coding assistants
 ```
+
+Run `pnpm dev:site` for marketing and `pnpm dev:web` for product; `pnpm build` builds both browser apps. Configure `PUBLIC_SITE_URL` and `PUBLIC_APP_URL` on both servers as distinct public origins; server-rendered cross-app links use those values. Development alone defaults to `http://127.0.0.1:3100` / `http://127.0.0.1:3101`. Missing/invalid production origins never invent a destination. Marketing’s legacy `/s` and `/u` paths redirect to product; product `/privacy` redirects to the site’s notice, with equal-origin configuration rejected to avoid loops. The marketing `/api/waitlist` proxy is its only backend bridge and forwards no private auth/viewer requests or cookies. The product waitlist handler validates the website origin, with its earlier product-origin fallback retained for compatibility. Backend secrets stay on product. The split does not modify ignored environment files, provision hosting or reopen the closed waitlist; HOST-01’s paid provisioning remains deferred.
 
 Share types and business rules, rather than forcing all native and browser UI into identical components. Keep the media gateway close to storage; do not buffer entire videos in serverless memory. The short-video prototype must verify authenticated range requests and deployment limits.
 

@@ -12,6 +12,7 @@ Peekalo is a camera-first photo/video sharing app for iOS and Android, with anon
 ## Product rules
 
 - Name: Peekalo. Default native flow: Camera -> capture -> review/retake -> send to chosen accounts or create a link.
+- Visual/product foundation: follow D-21/D-22 in `docs/DECISIONS.md`; use `@peekalo/design` semantic values, shared display font and canonical `BrandLogo`/`BrandMark` adapters. Never independently redraw the eyes or type the wordmark as a logo. Keep platform-specific layouts, explicit demo states and consistent reveal/sharing language.
 - Bottom navigation: Inbox left, a prominent Camera button in the center, Profile right. Tapping Camera opens the in-app camera.
 - Shared photos/videos must originate from in-app camera capture. No gallery, photo-library or file imports; backend uploads of those captures to private storage are still required.
 - Tap the shutter for a photo; hold to record video, release to stop, maximum ten seconds. Preview/review and photos use a consistent portrait 9:16 frame. Photos and videos up to ten seconds. The three-active-media-items limit is provisional until clarified; do not silently treat it as lifetime uploads or three attachments per message.

@@ -1,8 +1,8 @@
-.overlay { position: fixed; inset: 0; z-index: 1000; height: 100dvh; overflow: hidden; background: #101410; color: #fff; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grabbing; }
+.overlay { position: fixed; inset: 0; z-index: 1000; height: 100dvh; overflow: hidden; background: var(--pk-color-background); color: var(--pk-color-white); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grabbing; }
 .media { position: absolute; inset: 0; pointer-events: none; }
-.media > img, .media > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #101410; }
+.media > img, .media > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--pk-color-background); }
 .top { position: absolute; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: max(22px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) 48px max(22px, env(safe-area-inset-left)); background: linear-gradient(#0008, transparent); pointer-events: none; }
-.brand { font-size: 24px; font-weight: 600; letter-spacing: -1.5px; }
+.brand { --brand-height: 26px; }
 .time { padding: 9px 13px; border: 1px solid #ffffff40; border-radius: 30px; background: #10141080; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .bottom { position: absolute; inset: auto 0 0; display: flex; align-items: center; justify-content: center; gap: 9px; padding: 48px 22px max(28px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, #0008); font-size: 12px; font-weight: 500; pointer-events: none; }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: #d5e7a6; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pk-color-accent); }

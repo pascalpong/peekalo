@@ -8,10 +8,14 @@ COPY patches ./patches
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/reveal/package.json ./packages/reveal/package.json
+COPY packages/design/package.json ./packages/design/package.json
+COPY packages/web-ui/package.json ./packages/web-ui/package.json
 RUN pnpm --filter @peekalo/web... install --frozen-lockfile --ignore-scripts
 COPY apps/web ./apps/web
 COPY packages/contracts ./packages/contracts
 COPY packages/reveal ./packages/reveal
+COPY packages/design ./packages/design
+COPY packages/web-ui ./packages/web-ui
 # Turbopack traces Sharp under a hashed .next alias. Preserve its normal pnpm
 # alias too, so the independent startup preflight can require the same binary.
 RUN pnpm --filter @peekalo/web build \

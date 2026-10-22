@@ -4,7 +4,7 @@ import path from "node:path";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
-  transpilePackages: ["@peekalo/contracts", "@peekalo/reveal"],
+  transpilePackages: ["@peekalo/contracts", "@peekalo/design", "@peekalo/reveal", "@peekalo/web-ui"],
   poweredByHeader: false,
   async headers() {
     return [

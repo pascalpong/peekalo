@@ -1,0 +1,19 @@
+{
+  "name": "@peekalo/design",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fonts/display.ttf": "./assets/display.ttf",
+    "./brand": "./src/brand.ts",
+    "./brand/logo.png": "./assets/brand/logo.png",
+    "./brand/mark.png": "./assets/brand/mark.png"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "devDependencies": { "typescript": "5.9.3" }
+}

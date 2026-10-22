@@ -224,7 +224,7 @@ export function ProtectedViewer() {
         if (event.key === " " || event.key === "Enter") event.preventDefault();
         if (input.current === `key:${event.key}`) stop();
       }}>
-      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || state.phase === "unavailable" ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : state.phase === "unavailable" ? "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold for a little glimpse."}</strong><span>Release to hide · 10 seconds total</span></span>
+      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || state.phase === "unavailable" ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : state.phase === "unavailable" ? "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
     </button>
     {revealed && <FullscreenReveal seconds={seconds} onDismiss={stop}>
       {state.kind === "photo" && (

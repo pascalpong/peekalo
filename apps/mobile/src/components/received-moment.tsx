@@ -5,7 +5,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../lib/sharing-client';
-import { colors } from './ui';
+import { colors, tokens } from './ui';
 
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string };
 type Reveal = { uri: string; authorization: string; deadline: number; remainingMs: number };
@@ -174,7 +174,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         {reveal ? kind === 'photo' ? <Image source={{ uri: reveal.uri, headers: { Authorization: reveal.authorization }, cache: 'reload' }}
           style={StyleSheet.absoluteFill} resizeMode="contain" onError={mediaFailed} /> : <ReceivedVideo reveal={reveal} onError={mediaFailed} position={videoPosition} />
-          : <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold for a glimpse'}</Text></View>}
+          : <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View>}
       </View>
     </View>
     <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>
@@ -185,9 +185,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   </View>;
 }
 const styles = StyleSheet.create({
-  section: { gap: 14 }, budget: { textAlign: 'right', color: colors.ink, fontSize: 16, fontVariant: ['tabular-nums'] },
-  card: { width: '100%', aspectRatio: 9 / 16, backgroundColor: '#17231D', borderRadius: 20, overflow: 'hidden' },
-  cover: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: '#263B32' }, prompt: { color: '#fff', fontSize: 20 },
-  message: { color: colors.ink, textAlign: 'center', fontSize: 13 }, button: { minHeight: 50, borderRadius: 28, backgroundColor: colors.lime, padding: 16, alignItems: 'center' },
-  buttonText: { color: colors.ink, fontWeight: '600' }, note: { color: colors.muted, fontSize: 11, lineHeight: 17 },
+  section: { gap: 14 }, budget: { textAlign: 'right', color: colors.text, fontSize: 16, fontVariant: ['tabular-nums'] },
+  card: { width: '100%', aspectRatio: 9 / 16, backgroundColor: colors.background, borderRadius: 20, overflow: 'hidden' },
+  cover: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: colors.elevated }, prompt: { color: colors.text, fontSize: 20, fontFamily: tokens.font.display },
+  message: { color: colors.text, textAlign: 'center', fontSize: 13 }, button: { minHeight: 50, borderRadius: 28, backgroundColor: colors.accent, padding: 16, alignItems: 'center' },
+  buttonText: { color: colors.onAccent, fontWeight: '600' }, note: { color: colors.muted, fontSize: 11, lineHeight: 17 },
 });

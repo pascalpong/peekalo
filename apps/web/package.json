@@ -3,15 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 3101",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --port 3101",
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "eslint . --max-warnings=0"
   },
   "dependencies": {
     "@peekalo/contracts": "workspace:*",
+    "@peekalo/design": "workspace:*",
     "@peekalo/reveal": "workspace:*",
+    "@peekalo/web-ui": "workspace:*",
     "@supabase/supabase-js": "2.117.3",
     "next": "16.4.1",
     "react": "19.2.0",

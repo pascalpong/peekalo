@@ -8,9 +8,9 @@ Peekalo is being built as a camera-first photo/video sharing app: capture a phot
 - [MVP backlog](docs/MVP_BACKLOG.md) — feature checklist and acceptance criteria.
 - [Project instructions](AGENTS.md) — working rules for coding assistants.
 
-Current stage: **Supabase development setup verified.** Capture review supports account sign-in, private photo/video upload, single-use links and recipient requests. The Peekalo Supabase project has all four migrations applied, private capture storage and email verification enabled; 64 live integration assertions pass with generated fixtures. The API gateway was tested locally on this Mac. General signup email delivery, durable public API hosting and physical native sharing remain pending. See the build board for exact evidence.
+Current stage: **Supabase development setup verified.** Capture review supports account sign-in, private photo/video upload, single-use links and recipient requests. The Peekalo Supabase project has all four sharing migrations applied, private capture storage and email verification enabled; 64 live integration assertions pass with generated fixtures. The marketing waitlist migration remains local. The API gateway was tested locally on this Mac. General signup email delivery, durable public API hosting and physical native sharing remain pending. See the build board for exact evidence.
 
-Web has a sample profile and interactive viewer; mobile has Inbox, a prominent center Camera button, Profile and the same sample interaction. Camera preview and capture review share a centered portrait 9:16 frame; taller screens have dark extra space so framing stays consistent. The logo remains fixed at the top and the center navigation button is unchanged. Android live preview uses a plain logo fallback because blend mode affected native camera composition. Simulator camera fallback is explicit.
+Peekalo has separate web applications: `apps/site` is the prelaunch marketing website; `apps/web` is the product web app with shared-link viewing, sample profile and local viewer demo. They share branding and browser UI through workspace packages and use the same backend. Mobile has Inbox, a prominent center Camera button, Profile and the same sample interaction. Camera preview and capture review share a centered portrait 9:16 frame; taller screens have dark extra space so framing stays consistent. The canonical logo remains fixed at the top on a subtle dark backing, and the center navigation button is unchanged. Simulator camera fallback is explicit.
 
 Try PHOTO-01 at `/s/demo` on web or “Explore this sample” from the mobile Profile. Hold reveals a public still-life illustration; release, cancel, movement outside, navigation or loss of foreground hides it. Every hold shares ten seconds, with a countdown and an exhausted state. Space/Enter work on web; an accessible “Reveal for 1 second” button uses the same allowance on both platforms. Opening the viewer does not spend time. The runtime keeps the sample allowance across route changes; page reload/app restart resets it. This is a local interaction prototype, not a real single-use link or server authorization.
 
@@ -20,13 +20,26 @@ Tap the shutter for a photo; hold it for 300 ms to start video and release to st
 
 Photos and videos originate only from the in-app camera; there are no gallery, photo-library or file imports. Drafts stay in app cache without saving to the photo library. Retake/discard, navigation away and backgrounding clear the draft and attempt cleanup; late capture results are invalidated and cleaned up. Cleanup is best effort, not a guarantee that delivered or stored bytes are erased. Samsung framing and video are user-confirmed; ten-second duration, audio, interruption, permission-denial and front-camera checks, plus physical iOS capture, remain pending.
 
+## Prelaunch marketing site (MKT-01 / WEB-SPLIT-01)
+
+The `apps/site` homepage is Peekalo’s dark, responsive prelaunch landing page, separate from the product web app in `apps/web`. It uses an original ten-second Higgsfield/Wan 2.6 hero loop, with muted inline playback, pause/play control, poster fallback and reduced-motion/data-saver handling. Background video pauses off-screen or while the page is hidden. `/u/demo` and `/s/demo` belong to the product web app; the marketing site redirects those legacy paths to its configured product origin. The separate generated photo is identified as a local demo; its ten-second allowance persists across holds within that runtime and resets on reload. These marketing assets do not verify protected delivery or native privacy. Asset provenance, processing and exact generation prompts are in `apps/site/public/marketing/ASSETS.md`; bundled Bricolage Grotesque includes its SIL Open Font License.
+
+Early-access collection is **closed by default**. The page shows “opens soon” and `POST /api/waitlist` returns a sanitized 503 until `WAITLIST_ENABLED=true` is explicitly configured. Do not enable collection until migration `supabase/migrations/202610200001_marketing_waitlist.sql` is deployed, real Supabase POST/duplicate behavior is verified, and a working private contact/removal route is included in `/privacy`. Branded email is selected after domain choice; no domain or contact mailbox has been provisioned yet. Opening collection does not send emails or provide unsubscribe delivery; connect that flow before sending updates.
+
+When enabled, the browser posts `{email, consent:true, website:""}` to the marketing site’s same-origin `/api/waitlist`. Its bounded server proxy forwards only this waitlist request to the configured product backend. The backend validates the exact `PUBLIC_SITE_URL` origin and saves to Supabase using its server-only service credential. `PUBLIC_APP_URL` remains a legacy origin fallback when `PUBLIC_SITE_URL` is absent. Both servers must explicitly enable `WAITLIST_ENABLED=true`; the marketing app receives no database credentials or private viewer/auth proxy routes. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` stay in ignored server configuration. Duplicate requests return the same success and preserve the original consent record. No email, IP, request body or provider error is logged. RLS denies anonymous/authenticated database access. The body is capped at 2048 bytes and five seconds; storage requests have a five-second deadline. Identifier-free admission allows up to four in-flight requests and 30 requests per rolling minute per process. Limits reset on restart and do not coordinate across instances; use trusted edge limits before scaling. The flag is read at request time by the marketing page/proxy and backend endpoint. Keep protected/demo routes noindexed; search indexing for a public launch is a separate hosting change.
+
+Run `pnpm test:waitlist` for the backend handler and disposable PostgreSQL permissions/consent checks, and `pnpm test:web-split` for origin/proxy boundary checks, plus the workspace lint/typecheck and both web builds. Public hosting remains deferred; building this page does not provision Render or create a mailbox.
+
 ## Source layout
 
 ```text
 apps/mobile/          iOS and Android application
-apps/web/             Profiles, protected viewers, Node API and media processing
+apps/site/            Marketing website, privacy notice and waitlist-only proxy
+apps/web/             Product web app, profiles, protected viewers, Node API/media processing
 packages/contracts/   Shared media types and limits
 packages/reveal/      Local sample allowance controller and deterministic tests
+packages/design/      Shared native/web tokens, canonical logo artwork and display font
+packages/web-ui/      Shared browser brand/icons, reveal overlay, base CSS and origin validation
 scripts/              Native build runner and backend verification suites
 supabase/migrations/  Service-only sharing schema and atomic claim/budget functions
 docs/                 Build board, decisions, plan and backlog
@@ -34,16 +47,22 @@ docs/                 Build board, decisions, plan and backlog
 
 The Node API and trusted Sharp/FFmpeg processing path are in `apps/web/lib/server/`. The database migrations are under `supabase/migrations/`; the intended separate worker deployment remains future work.
 
+All three applications consume `@peekalo/design`; the two browser apps reuse `@peekalo/web-ui`. Update `@peekalo/design` semantic values to change the common palette/scale; keep native components and web CSS as platform adapters. Brand, component and product-language rules live in D-21 of `docs/DECISIONS.md`.
+
+D-22 uses one canonical logo geometry in `packages/design/src/brand-geometry.ts`: web renders the outlined SVG and native loads its bundled PNG densities. Headers, camera/account panels, footer, sample phone and reveal overlay use these adapters. Run `pnpm brand:generate` after editing shared logo geometry/colors and `pnpm brand:check` to verify the checked-in exports, including native launcher and web favicon. Launcher asset changes take effect in the next native build; header/logo artwork changes are bundled JavaScript/assets.
+
 ## Install and run
 
 Use **Node 24.14.1** and **pnpm 11.25.0**. Exact application dependencies are pinned in package manifests and `pnpm-lock.yaml`.
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm dev:web
+pnpm dev:site  # Marketing website, port 3100
 ```
 
-Open [the sample profile](http://localhost:3000) or [the viewer demo](http://localhost:3000/s/demo). `/u/demo` also shows the profile. These samples need no environment variables or API keys. Configured protected links use `/s/view#…` and the separate backend described below; unknown viewer paths show an unavailable state.
+In another terminal, run `pnpm dev:web` for the product web app on port 3101. Open [the website](http://127.0.0.1:3100), [the web app](http://127.0.0.1:3101), [the sample profile](http://127.0.0.1:3101/u/demo) or [the viewer demo](http://127.0.0.1:3101/s/demo). These public samples need no API keys; early-access collection stays closed by default. Configured protected links use the product origin’s `/s/view#…`; unknown viewer paths show an unavailable state.
+
+For cross-app links, configure `PUBLIC_SITE_URL` as the marketing origin and `PUBLIC_APP_URL` as the product origin on both servers. Use distinct actual HTTPS origins without paths or credentials in production. Only development supplies loopback defaults (`http://127.0.0.1:3100` / `http://127.0.0.1:3101`); use those same origins in the browser when testing origin checks. Missing or invalid production configuration omits cross-app links or shows an unavailable state rather than inventing a domain. The product `/privacy` redirects to the configured website’s notice; equal origins are rejected to prevent a self-redirect. No ignored environment files were changed as part of this split; ensure an older local `PUBLIC_APP_URL` still points to the product server before generating links.
 
 For the native app, install Xcode 26.2+ with an iOS simulator runtime and CocoaPods, then run:
 
@@ -75,7 +94,7 @@ After installation, leave Metro running (`pnpm dev:mobile`). For a USB connectio
 
 ## Native tooling notes
 
-- Mobile is pinned to **Expo 55.0.31 / React Native 0.83.10** for the installed Xcode 26.2. Web is **Next.js 16.4.1**; both apps use **React 19.2.0** for compatible, consistent peer resolution.
+- Mobile is pinned to **Expo 55.0.31 / React Native 0.83.10** for the installed Xcode 26.2. Both browser apps use **Next.js 16.4.1**; all apps use **React 19.2.0** for compatible, consistent peer resolution.
 - A source-build setting in `app.json` avoids React Native's prebuilt-artifact file-URI failure when the checkout path contains spaces. This makes the first native build slower. [Expo build-properties documentation](https://docs.expo.dev/versions/v55.0.0/sdk/build-properties/)
 - CocoaPods can be installed normally with `brew install cocoapods`. On this Mac, the stalled Homebrew Ruby download was replaced with CocoaPods 1.17.0 in ignored `.cache/cocoapods`, using the existing Homebrew portable Ruby. The runner recognizes that optional local install; it is not an application dependency and is not committed.
 - Keep several GB free on the internal drive for Apple tooling, even with external build caches. The successful simulator build had over 5 GiB free. A local Expo config plugin fixes generated shell-script quoting for checkout paths containing spaces. See the build board for actual native evidence.
@@ -86,13 +105,16 @@ After installation, leave Metro running (`pnpm dev:mobile`). For a USB connectio
 
 ```sh
 pnpm lint           # Workspace code and native runner
-pnpm typecheck      # Shared contracts, mobile and web
+pnpm typecheck      # Shared packages, mobile, website and web app
 pnpm test:mobile    # 31 photo/video lifecycle and framing tests
 pnpm test:reveal    # 12 local allowance, cancellation and timer tests
 pnpm test:backend   # Disposable PostgreSQL 15: real migration/claim/grant/budget tests
-pnpm build          # Web production build
+pnpm test:web-split # Public origins and marketing proxy boundary regression
+pnpm test:waitlist  # Signup handler, admission and PostgreSQL permissions/consent
+pnpm brand:check    # Both favicons and native assets match canonical artwork
+pnpm build          # Marketing website and product web app production builds
 pnpm export:mobile  # iOS and Android production JS bundles
-pnpm check          # Lint, types, mobile/reveal/backend tests, web build and mobile exports
+pnpm check          # Lint, types, mobile/reveal/backend tests, both web builds and mobile exports
 pnpm peers check
 pnpm --filter @peekalo/mobile exec expo install --check
 ```
@@ -108,14 +130,14 @@ After capture, tap **Share moment**, sign in/create an account and choose a user
 
 Copy `apps/web/.env.example` and `apps/mobile/.env.example` to ignored `.env.local` files. Only the web server receives `SUPABASE_SERVICE_ROLE_KEY` and `SHARE_TOKEN_SECRET`; never put them in Expo public variables. Mobile needs only `EXPO_PUBLIC_API_URL` and obtains the non-privileged auth configuration from the server. Apply migrations under `supabase/migrations/` to a dedicated development project. The worker needs Sharp plus `ffmpeg`/`ffprobe`; this Node processing path is not a drop-in serverless deployment.
 
-Run `pnpm --filter @peekalo/web build`, then `pnpm --filter @peekalo/web start --port 4000`. Earlier public tests used an ephemeral tunnel to this Mac; restarting it changes the URL and breaks links to its old host. Keep server `PUBLIC_APP_URL` and mobile `EXPO_PUBLIC_API_URL` on the same HTTPS origin for phone/public tests. Durable hosting/domain setup remains pending.
+Run `pnpm --filter @peekalo/web build`, then `pnpm --filter @peekalo/web exec next start --port 4000`. The package’s plain `start` command defaults to 3101. Earlier public tests used an ephemeral tunnel to this Mac; restarting it changes the URL and breaks links to its old host. Keep server `PUBLIC_APP_URL` and mobile `EXPO_PUBLIC_API_URL` on the same HTTPS origin for phone/public tests. Durable hosting/domain setup remains pending.
 
 For disposable development projects only, set `PEEKALO_TEST_BASE_URL` and run `pnpm test:sharing`. This uses generated fixtures and temporary test accounts and cleans them up; never point it at production. It verifies real transactions, authorization and storage delivery rather than mocks. Existing capture/reveal unit tests remain in `pnpm check`.
 
 To repeat the verified localhost integration without changing the ignored app URL files, start the production gateway in one terminal, then run the suite in another:
 
 ```sh
-PUBLIC_APP_URL=http://127.0.0.1:4000 pnpm --filter @peekalo/web start --hostname 127.0.0.1 --port 4000
+PUBLIC_APP_URL=http://127.0.0.1:4000 pnpm --filter @peekalo/web exec next start --hostname 127.0.0.1 --port 4000
 ```
 
 ```sh
@@ -140,7 +162,7 @@ Adding `expo-web-browser` requires a native rebuild (`pnpm android --device` / `
 
 ## Container hosting — HOST-01
 
-The root `Dockerfile` packages the web/API into one Node 24.14.1 container with Sharp, FFmpeg/FFprobe, H.264/AAC encoders and an unprivileged server process. Next.js standalone output includes the workspace dependencies, static chunks and public demo fixtures. Build from the repository root; `.dockerignore` excludes environment files, native projects, caches and unrelated workspace inputs. Supply backend credentials only at runtime. No persistent capture disk is required; media remains in private Supabase Storage.
+The root `Dockerfile` packages the product web/API into one Node 24.14.1 container with Sharp, FFmpeg/FFprobe, H.264/AAC encoders and an unprivileged server process. Next.js standalone output includes the workspace dependencies, static chunks and public demo fixtures. Build from the repository root; `.dockerignore` excludes environment files, native projects, caches and unrelated workspace inputs. Supply backend credentials only at runtime. No persistent capture disk is required; media remains in private Supabase Storage.
 
 ```sh
 docker build --tag peekalo-hosting:local .
@@ -165,10 +187,30 @@ Then use `PUBLIC_APP_URL=http://127.0.0.1:4001 PEEKALO_TEST_BASE_URL=http://127.
 
 Before listening, the container validates required settings, HTTPS origins (HTTP is allowed only for explicit loopback development), optional quota syntax, actual Sharp JPEG encoding, FFmpeg/FFprobe, required encoders and private writable temporary storage. Startup errors are generic. `GET /api/health` returns only `{ready}` with HTTP 200/503 and no-store headers; it checks that the service credential can read migration 004's request-mapping table and that `peekalo-captures` is private with the expected 30 MiB limit, under a four-second deadline. This is readiness for those dependencies, not a full authorization regression or email/device test. `/api/shares/config` remains the native client's public bootstrap endpoint and is not the hosting health check.
 
-Render is the selected hosting provider for the combined web/API/media runtime, retaining the existing Supabase project. `render.yaml` describes the development deployment; its presence does not mean a service is live. It proposes Singapore, one `1c-2g` instance (1 CPU / 2 GB), manual deploys, `/api/health` and a 120-second shutdown allowance. Review the current [compute plan](https://render.com/docs/compute-plans) and [pricing](https://render.com/pricing) before creating billable resources. Render provides a stable HTTPS `onrender.com` origin; a custom domain is optional for this development step. See the [Blueprint reference](https://render.com/docs/blueprint-spec) and [Docker hosting documentation](https://render.com/docs/docker).
+Render is the selected hosting provider for the combined web/API/media runtime, retaining the existing Supabase project. `render.yaml` describes the development deployment; its presence does not mean a service is live. It now proposes two Singapore **Free** web services: `peekalo-dev` for product/API/media and `peekalo-site-dev` for marketing, one instance each, manual deploys and `/api/health`. Product retains a 120-second shutdown allowance. The prior paid proposal remains deferred. Review the current [compute plan](https://render.com/docs/compute-plans) and [pricing](https://render.com/pricing) before creating billable resources. Render provides a stable HTTPS `onrender.com` origin; a custom domain is optional for this development step. See the [Blueprint reference](https://render.com/docs/blueprint-spec) and [Docker hosting documentation](https://render.com/docs/docker).
 
-Deployment sequence: publish the reviewed repository branch to GitHub, connect the repository in Render, and review the proposed service/plan. Set the five `sync: false` values in the hosting secret settings from the ignored server configuration. Preserve the existing `SHARE_TOKEN_SECRET` so existing tokens/cookies keep their signatures. Set `PUBLIC_APP_URL` to the exact assigned HTTPS origin; do not include a path. After health passes, run the generated-fixture suite through that origin, then update mobile's ignored `EXPO_PUBLIC_API_URL` and restart Metro. Keep the prior gateway available until the new origin is verified; changing the host does not migrate URLs already sent. Roll back by deploying the previous image/commit with the same runtime secrets; deployment does not apply migrations automatically.
+The marketing website has its own standalone image without database credentials or a media runtime. Build it separately from the same repository root:
+
+```sh
+docker build -f apps/site/Dockerfile --tag peekalo-site:local .
+node scripts/test-site-container.mjs
+```
+
+The site smoke checks standalone pages/chunks/assets, absent private routes, closed collection, compatibility redirects, non-root execution and no environment files. CI has separate product and site container jobs. Configure only public origins and the closed waitlist gate on the site; backend secrets stay on the product service. The user selected free preview preparation on 22 October; paid provisioning remains deferred. The Blueprint creates no Render database, disk or worker.
+
+Deployment sequence: publish the reviewed repository branch to GitHub, connect the repository in Render, and review the proposed service/plan. Supply the four existing Supabase/signing settings only on the product service from ignored server configuration; supply both assigned public origins on each service. Preserve the existing `SHARE_TOKEN_SECRET` so existing tokens/cookies keep their signatures. Set `PUBLIC_APP_URL` to the exact assigned product HTTPS origin and `PUBLIC_SITE_URL` to the actual marketing origin on both servers; do not include paths. Keep the waitlist closed until the existing collection requirements are met. After health passes, run the generated-fixture suite through that origin, then update mobile's ignored `EXPO_PUBLIC_API_URL` and restart Metro. Keep the prior gateway available until the new origin is verified; changing the host does not migrate URLs already sent. Roll back by deploying the previous image/commit with the same runtime secrets; deployment does not apply migrations automatically.
 
 Keep one Node process initially, allow multipart bodies of at least 30 MiB plus 64 KiB overhead, allow upload/processing requests beyond the 75-second probe/transcode window, preserve authorization/cookies/Range headers and disable proxy/CDN caching for `/api/**`. Restrict operational logs to sanitized metadata, without credentials, raw link tokens or request bodies. Avoid persistent scratch volumes; the local command bounds ephemeral scratch to 256 MiB, while the Render template relies on the container's ephemeral filesystem. Measure real memory and latency before changing instance size.
+
+Free preview limits: each service receives 0.1 CPU / 512 MB, sleeps after 15 idle minutes and can take about a minute to wake. All Free web services share 750 instance-hours per workspace each month, including unrelated services already in this workspace. Bandwidth/build limits and external Supabase traffic also apply; without a payment method, exhaustion can suspend services; with a payment method, supplementary bandwidth/build usage can be billed. See [Render Free limits](https://render.com/docs/free) and [current compute plans](https://render.com/docs/compute-plans). A successful page/container smoke does not establish photo/video processing capacity or production readiness. Do not use keep-alive traffic to bypass idle suspension.
+
+Reproduce the free-resource page/bootstrap smoke checks with the locally built images:
+
+```sh
+PEEKALO_TEST_PROFILE=free node scripts/test-hosting-container.mjs
+PEEKALO_TEST_PROFILE=free node scripts/test-site-container.mjs
+```
+
+These use synthetic credentials with 512 MiB / 0.1 CPU and do not create Supabase accounts or media. Real upload/transcoding capacity and the hosted Linux AMD64 split need separate verification. Keep both `WAITLIST_ENABLED` values false; the website needs no Supabase secrets. No domain purchase or SMTP provider is needed for this closed preview.
 
 Before inviting users, finish upload admission/timeouts before body buffering and stale-upload recovery after crashes; the current processing concurrency guard begins after multipart buffering and an interrupted reservation can remain `uploading`. Rate limits, signup SMTP, physical native sharing/privacy, and a separate durable worker/job queue remain tracked work. Hosting preparation does not close them.
