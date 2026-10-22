@@ -10,7 +10,7 @@ if (!['web', 'mobile'].includes(mode)) throw new Error('Choose web or mobile');
 const env = { ...process.env };
 const args = mode === 'web'
   ? ['--filter', '@peekalo/web', 'exec', 'next', 'start', '--hostname', '127.0.0.1', '--port', '3101']
-  : ['--filter', '@peekalo/mobile', 'start', '--port', '8082', ...process.argv.slice(3)];
+  : ['--filter', '@peekalo/mobile', 'start', '--port', '8083', ...process.argv.slice(3)];
 if (mode === 'web') {
   const local = parseEnv(await readFile(new URL('../apps/web/.env.local-testing', import.meta.url), 'utf8'));
   if (local.SUPABASE_URL !== 'http://127.0.0.1:55321' || local.PUBLIC_APP_URL !== 'http://127.0.0.1:3101') throw new Error('Run pnpm local:setup first');
@@ -18,6 +18,8 @@ if (mode === 'web') {
 } else {
   for (const key of Object.keys(env)) if (key.startsWith('SUPABASE_') || key === 'SHARE_TOKEN_SECRET') delete env[key];
   env.EXPO_PUBLIC_API_URL = 'http://127.0.0.1:3101';
+  // Keep --localhost reachable through Android's IPv4 USB reverse endpoint.
+  env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ''} --dns-result-order=ipv4first`.trim();
 }
 const child = spawn('pnpm', args, { cwd: root, env, stdio: 'inherit' });
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));

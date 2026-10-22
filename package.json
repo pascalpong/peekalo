@@ -34,7 +34,8 @@
     "local:setup": "node scripts/dev-local-backend.mjs",
     "local:stop": "node scripts/dev-local-backend.mjs stop",
     "dev:web:local": "node scripts/dev-local-apps.mjs web",
-    "dev:mobile:local": "node scripts/dev-local-apps.mjs mobile"
+    "dev:mobile:local": "node scripts/dev-local-apps.mjs mobile",
+    "test:auth:local": "node --env-file=apps/web/.env.local-testing scripts/test-local-auth.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

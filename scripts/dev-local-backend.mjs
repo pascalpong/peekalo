@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { createServer, request as httpRequest } from 'node:http';
+import { createConnection } from 'node:net';
 import { randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdir, open, readFile, readdir, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +21,7 @@ const apiOrigin = 'http://127.0.0.1:55321';
 const mailOrigin = 'http://127.0.0.1:55324';
 const appOrigin = 'http://127.0.0.1:3101';
 const mode = process.argv[2] ?? 'start';
+let dockerSocket;
 const childEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   !key.startsWith('SUPABASE_') && !['SHARE_TOKEN_SECRET', 'PUBLIC_APP_URL', 'PUBLIC_SITE_URL', 'EXPO_PUBLIC_API_URL'].includes(key)));
 
@@ -100,6 +103,7 @@ async function localDocker() {
   if (!endpoint.startsWith('unix://') || (childEnv.DOCKER_HOST && !childEnv.DOCKER_HOST.startsWith('unix://'))) {
     throw new Error('A local Docker socket is required');
   }
+  dockerSocket = endpoint.slice('unix://'.length);
   const info = JSON.parse(await command('docker', ['info', '--format', '{{json .}}'], 'docker-info'));
   if (mode === 'start' && info.MemTotal < 6 * 1024 ** 3) throw new Error('Insufficient Docker memory');
 }
@@ -114,6 +118,71 @@ async function loopbackNetwork() {
   }
 }
 const supabaseArgs = ['--workdir', workdir, '--network-id', network];
+// Docker Desktop ignores the bridge binding default when the CLI explicitly
+// supplies HostIp. Rewrite only this stack's container-create requests BEFORE
+// they reach Docker. The private socket forwards the CLI's other local traffic.
+async function startWithLoopbackPorts() {
+  const socket = join(workdir, 'docker.sock');
+  if (await exists(socket)) await unlink(socket);
+  const sockets = new Set();
+  const proxy = createServer(async (incoming, outgoing) => {
+    let body;
+    try {
+      if (incoming.method === 'POST' && /\/containers\/create(?:\?|$)/.test(incoming.url)) {
+        const url = new URL(incoming.url, 'http://localhost');
+        if (!new RegExp(`^supabase_[a-z0-9_]+_${project}$`).test(url.searchParams.get('name') ?? '')) throw new Error();
+        const chunks = []; let size = 0;
+        for await (const chunk of incoming) {
+          if ((size += chunk.length) > 4 * 1024 * 1024) throw new Error();
+          chunks.push(chunk);
+        }
+        const data = JSON.parse(Buffer.concat(chunks).toString());
+        if (data.HostConfig?.NetworkMode !== network) throw new Error();
+        for (const bindings of Object.values(data.HostConfig.PortBindings ?? {})) {
+          for (const binding of bindings ?? []) binding.HostIp = '127.0.0.1';
+        }
+        body = Buffer.from(JSON.stringify(data));
+      }
+      const headers = { ...incoming.headers };
+      if (body) { delete headers['transfer-encoding']; headers['content-length'] = body.length; }
+      const upstream = httpRequest({ socketPath: dockerSocket, method: incoming.method, path: incoming.url, headers }, response => {
+        outgoing.writeHead(response.statusCode, response.headers);
+        response.pipe(outgoing);
+      });
+      upstream.on('error', () => { if (!outgoing.headersSent) outgoing.writeHead(502); outgoing.end(); });
+      incoming.on('aborted', () => upstream.destroy());
+      outgoing.on('close', () => upstream.destroy());
+      if (body) upstream.end(body); else incoming.pipe(upstream);
+    } catch { outgoing.writeHead(400); outgoing.end('Local Docker request rejected'); }
+  });
+  // Docker exec uses an upgraded connection for streaming database checks.
+  proxy.on('upgrade', (request, downstream, head) => {
+    const upstream = createConnection({ path: dockerSocket }, () => {
+      upstream.write(`${request.method} ${request.url} HTTP/${request.httpVersion}\r\n` +
+        Object.entries(request.headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') + '\r\n');
+      if (head.length) upstream.write(head);
+      downstream.pipe(upstream); upstream.pipe(downstream);
+    });
+    sockets.add(upstream); upstream.once('close', () => sockets.delete(upstream));
+    upstream.on('error', () => downstream.destroy());
+    downstream.on('error', () => upstream.destroy());
+    downstream.on('close', () => upstream.destroy());
+  });
+  proxy.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  await new Promise((resolve, reject) => { proxy.once('error', reject); proxy.listen(socket, resolve); });
+  await chmod(socket, 0o600);
+  const oldHost = childEnv.DOCKER_HOST, oldContext = childEnv.DOCKER_CONTEXT;
+  childEnv.DOCKER_HOST = `unix://${socket}`; delete childEnv.DOCKER_CONTEXT;
+  try {
+    await command('supabase', ['start', ...supabaseArgs, '--exclude', 'studio,postgres-meta,realtime,imgproxy,edge-runtime,logflare,vector,supavisor'], 'supabase-start', 20 * 60_000);
+  } finally {
+    if (oldHost === undefined) delete childEnv.DOCKER_HOST; else childEnv.DOCKER_HOST = oldHost;
+    if (oldContext !== undefined) childEnv.DOCKER_CONTEXT = oldContext;
+    for (const socket of sockets) socket.destroy();
+    await new Promise(resolve => proxy.close(resolve));
+    if (await exists(socket)) await unlink(socket);
+  }
+}
 async function verifyBindings() {
   const ids = (await command('docker', ['ps', '--filter', `name=_${project}`, '--format', '{{.ID}}'], 'docker-project-containers')).trim().split('\n').filter(Boolean);
   if (!ids.length) throw new Error('No local project containers found');
@@ -148,7 +217,7 @@ try {
   } else {
     await prepare(); await loopbackNetwork();
     console.log('Starting isolated local Supabase; private command output stays in .cache/local-supabase.');
-    await command('supabase', ['start', ...supabaseArgs, '--exclude', 'studio,postgres-meta,realtime,imgproxy,edge-runtime,logflare,vector,supavisor'], 'supabase-start', 20 * 60_000);
+    await startWithLoopbackPorts();
     try { await verifyBindings(); }
     catch {
       await command('supabase', ['stop', '--project-id', project, '--workdir', workdir], 'supabase-unsafe-binding-stop');
@@ -156,12 +225,21 @@ try {
     }
     await command('supabase', ['migration', 'up', '--local', ...supabaseArgs], 'supabase-migrations');
     const status = JSON.parse(await command('supabase', ['status', '-o', 'json', ...supabaseArgs], 'supabase-status'));
+    let auth, inboxReady = false;
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const settings = await fetch(`${apiOrigin}/auth/v1/settings`, { headers: { apikey: status.ANON_KEY }, signal: AbortSignal.timeout(5000) });
+        if (settings.ok) auth = await settings.json();
+        const inbox = await fetch(`${mailOrigin}/api/v1/messages`, { signal: AbortSignal.timeout(5000) });
+        inboxReady = inbox.ok;
+        if (auth && inboxReady) break;
+      } catch { /* Services may still be warming after CLI startup. */ }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!auth || auth.external?.google || auth.mailer_autoconfirm !== false) throw new Error('Email confirmation configuration not ready');
+    if (!inboxReady) throw new Error('Local email inbox is not ready');
     await writeEnvironment(status);
-    const settings = await fetch(`${apiOrigin}/auth/v1/settings`, { headers: { apikey: status.ANON_KEY }, signal: AbortSignal.timeout(5000) });
-    const auth = await settings.json();
-    if (!settings.ok || auth.external?.google || auth.mailer_autoconfirm !== false) throw new Error('Email confirmation configuration not ready');
-    const inbox = await fetch(`${mailOrigin}/api/v1/messages`, { signal: AbortSignal.timeout(5000) });
-    if (!inbox.ok) throw new Error('Local email inbox is not ready');
     console.log(`Local API ready: ${apiOrigin}`);
     console.log(`Local confirmation inbox: ${mailOrigin}`);
     console.log('Separate server configuration: apps/web/.env.local-testing (mode 600; keys not printed).');
