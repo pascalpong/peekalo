@@ -40,6 +40,7 @@ export function ProtectedViewer() {
     let holding = false;
     let once = false;
     let deadline = 0;
+    let renewalWaitStarted: number | null = null;
     let unreserved = 10_000;
     let current = initial;
     let controller: AbortController | null = null;
@@ -64,6 +65,7 @@ export function ProtectedViewer() {
       controller?.abort();
       controller = null;
       clearTimers();
+      renewalWaitStarted = null;
       // Stop audio synchronously, before React removes the media element.
       if (video.current) {
         videoPosition.current = video.current.currentTime;
@@ -103,7 +105,8 @@ export function ProtectedViewer() {
       }
     };
     const requestLease = async (turn: number) => {
-      if (!holding || !mounted || generation !== turn) return;
+      if (!holding || !mounted || generation !== turn || controller) return;
+      clearTimeout(renewal);
       const sentAt = performance.now();
       const previousDeadline = deadline;
       const pending = new AbortController();
@@ -115,8 +118,14 @@ export function ProtectedViewer() {
         controller = null;
         if (!response.ok) {
           const code = (result.error ?? result.code)?.toLowerCase() ?? "";
-          if (response.status === 409 && code === "renew_later" && previousDeadline > performance.now()) {
-            renewal = setTimeout(() => { void requestLease(turn); }, 50);
+          if (response.status === 409 && code === "renew_later") {
+            // Release hides immediately but does not cancel the server's prepaid
+            // slice. A new hold must wait for renewal without treating that
+            // still-active slice as a lost claim or revealing without a grant.
+            const now = performance.now();
+            renewalWaitStarted ??= now;
+            if (now - renewalWaitStarted >= 3_000) { stop("error"); return; }
+            renewal = setTimeout(() => { void requestLease(turn); }, 100);
             return;
           }
           stop(code.includes("exhaust") ? "exhausted" : code.includes("busy") ? "busy" : response.status === 410 || response.status === 409 || response.status === 404 || response.status === 403 ? "unavailable" : "error");
@@ -129,6 +138,7 @@ export function ProtectedViewer() {
           stop("error"); return;
         }
         unreserved = result.remainingMs;
+        renewalWaitStarted = null;
         const now = performance.now();
         const conservativeDeadline = Math.max(sentAt, previousDeadline) + result.grantedMs;
         deadline = Math.min(conservativeDeadline, now + Math.max(0, serverExpires - Date.now()));

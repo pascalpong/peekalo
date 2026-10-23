@@ -22,7 +22,7 @@
     "brand:generate": "node scripts/generate-brand.mjs",
     "brand:check": "node scripts/generate-brand.mjs --check",
     "test:waitlist": "node --test scripts/test-waitlist.mjs",
-    "test:reveal": "pnpm --filter @peekalo/reveal test",
+    "test:reveal": "pnpm --filter @peekalo/reveal test && node --test scripts/test-protected-viewer.mjs",
     "test:sharing": "node --env-file=apps/web/.env.local scripts/test-sharing-backend.mjs",
     "test:backend": "node --test scripts/test-backend-ledger.mjs",
     "dev:site": "pnpm --filter @peekalo/site dev",
