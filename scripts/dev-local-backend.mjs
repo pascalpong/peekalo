@@ -85,7 +85,7 @@ async function prepare() {
     ['db.seed', 'enabled', 'false'], ['realtime', 'enabled', 'false'], ['studio', 'enabled', 'false'],
     ['inbucket', 'enabled', 'true'], ['inbucket', 'port', '55324'], ['storage', 'file_size_limit', '"30MiB"'],
     ['auth', 'site_url', JSON.stringify(appOrigin)],
-    ['auth', 'additional_redirect_urls', JSON.stringify([appOrigin, 'peekalo://auth-callback'])],
+    ['auth', 'additional_redirect_urls', JSON.stringify([appOrigin, 'peekalo://auth-callback', 'peekalo://reset-password'])],
     ['auth', 'enable_signup', 'true'], ['auth', 'enable_anonymous_sign_ins', 'false'],
     ['auth.email', 'enable_signup', 'true'], ['auth.email', 'enable_confirmations', 'true'],
     ['auth.rate_limit', 'email_sent', '1000'], ['edge_runtime', 'enabled', 'false'], ['analytics', 'enabled', 'false'],

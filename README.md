@@ -166,7 +166,7 @@ The account panel offers **Continue with Google** (Supabase OAuth with PKCE in t
 
 1. In Google Cloud Console → APIs & Services → Credentials, create an **OAuth client ID** of type **Web application**. Add the authorized redirect URI `https://<project-ref>.supabase.co/auth/v1/callback`. Configure the OAuth consent screen (app name, support email, scopes `email`, `profile`, `openid`).
 2. In Supabase → Authentication → Sign In / Providers → **Google**, enable it and paste that client ID and secret. Keep the secret out of the repository.
-3. In Supabase → Authentication → URL Configuration → **Redirect URLs**, add `peekalo://auth-callback`.
+3. In Supabase → Authentication → URL Configuration → **Redirect URLs**, add `peekalo://auth-callback` and `peekalo://reset-password` (password recovery).
 
 Adding `expo-web-browser` requires a native rebuild (`pnpm android --device` / `pnpm ios`); Metro refresh alone is not enough. `supabase/config.toml` mirrors these settings for a local Supabase stack using `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` and `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET`.
 

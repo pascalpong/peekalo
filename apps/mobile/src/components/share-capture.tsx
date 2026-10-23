@@ -6,6 +6,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle, type AuthProviders } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
 import { BrandLogo } from './brand';
+import { requestPasswordRecovery, subscribePasswordRecovery } from '../lib/auth-recovery';
 
 type Props = {
   visible: boolean;
@@ -36,6 +37,8 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   const generation = useRef(0);
   const callback = useRef(onBusyChange);
   callback.current = onBusyChange;
+  const closeCallback = useRef(onClose);
+  closeCallback.current = onClose;
   const captureUri = capture?.uri;
 
   function cancelOperation() {
@@ -46,6 +49,14 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     callback.current?.(false);
   }
   useEffect(() => () => { cancelOperation(); }, []);
+  useEffect(() => {
+    if (!visible) return;
+    return subscribePasswordRecovery(() => {
+      cancelOperation(); setBusy(false); setPassword('');
+      // A native Modal otherwise covers the new reset route on a warm link.
+      closeCallback.current();
+    });
+  }, [visible]);
   useEffect(() => {
     if (draft.current?.uri !== captureUri) {
       cancelOperation(); setBusy(false);
@@ -132,6 +143,14 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     void run(async (current, signal) => {
       const signedIn = await signInWithGoogle(signal);
       if (signedIn && current()) await loadAccount(current, signal);
+    });
+  }
+
+  function forgotPassword() {
+    setPassword('');
+    void run(async (current, signal) => {
+      const message = await requestPasswordRecovery(email, signal);
+      if (current()) setNotice(message);
     });
   }
 
@@ -262,6 +281,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
             <TextInput style={styles.input} accessibilityLabel="Email" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" autoComplete="email" editable={!busy} />
             <TextInput style={styles.input} accessibilityLabel="Password" placeholder={signingUp ? 'Password (at least 8 characters)' : 'Password'} placeholderTextColor={colors.muted} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete={signingUp ? 'new-password' : 'current-password'} editable={!busy} />
             <Action label={signingUp ? 'Create account' : 'Sign in'} onPress={authenticate} disabled={busy || providers.email === false || !email.trim() || password.length < (signingUp ? 8 : 1)} />
+            {!signingUp && <Pressable accessibilityRole="button" disabled={busy || providers.email === false} onPress={forgotPassword} style={styles.textButton}><Text style={styles.textButtonLabel}>Forgot password?</Text></Pressable>}
             <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setSigningUp(!signingUp); setError(''); setNotice(''); }} style={styles.textButton}><Text style={styles.textButtonLabel}>{signingUp ? 'Already have an account? Sign in' : 'New here? Create an account'}</Text></Pressable>
           </View>}
           {stage === 'username' && <View style={styles.section}>

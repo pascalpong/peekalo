@@ -96,6 +96,54 @@ const sessionStorage = {
 
 let clientPromise: Promise<SupabaseClient> | undefined;
 let authConfig: { supabaseUrl: string; supabaseAnonKey: string } | undefined;
+let recoveryClient: SupabaseClient | undefined;
+let recoveryStorageKey: string | undefined;
+let recoverySession: string | null = null;
+
+// Recovery verifiers survive opening email with the app closed. Its session is
+// deliberately memory-only and never becomes the ordinary app's login.
+export async function getPasswordRecoveryClient(signal?: AbortSignal) {
+  await getSharingClient(signal);
+  checkCancelled(signal);
+  if (!recoveryClient) {
+    recoveryStorageKey = `recovery-${new URL(authConfig!.supabaseUrl).host}`;
+    const key = recoveryStorageKey;
+    const indexKey = `${key}-stored-keys`;
+    const storage = {
+      getItem: (name: string) => name === key ? Promise.resolve(recoverySession) : sessionStorage.getItem(name),
+      async setItem(name: string, value: string) {
+        if (name === key) { recoverySession = value; return; }
+        await serialized(indexKey, async () => {
+          const keys = JSON.parse(await sessionStorage.getItem(indexKey) ?? '[]') as string[];
+          if (!keys.includes(name)) await sessionStorage.setItem(indexKey, JSON.stringify([...keys, name]));
+          await sessionStorage.setItem(name, value);
+        });
+      },
+      async removeItem(name: string) {
+        if (name === key) recoverySession = null;
+        else await sessionStorage.removeItem(name);
+      },
+    };
+    recoveryClient = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+      auth: { storage, storageKey: key, persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'pkce', lock: processLock },
+    });
+    recoveryClient.auth.stopAutoRefresh();
+  }
+  return recoveryClient;
+}
+
+export async function clearPasswordRecoveryStorage() {
+  recoverySession = null;
+  if (!recoveryStorageKey) return;
+  const key = `${recoveryStorageKey}-stored-keys`;
+  await serialized(key, async () => {
+    const keys = JSON.parse(await sessionStorage.getItem(key) ?? '[]') as string[];
+    await Promise.all(keys.map(name => sessionStorage.removeItem(name)));
+    await sessionStorage.removeItem(key);
+  });
+  // Discard the SDK's in-memory session too; it is not used for normal sign-in.
+  recoveryClient = undefined;
+}
 
 async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
   if (options.signal?.aborted) throw new SharingError('The request was cancelled.', 'cancelled');
