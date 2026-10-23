@@ -100,6 +100,13 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
+### VIDEO-01: native recording handoff and playback interruption fixes — 23 October (device retest pending)
+
+- The first direct-video attempt on Samsung failed before upload with “Could not record a video.” Scoped native recorder evidence showed `ERROR_NO_VALID_DATA`: remounting CameraView for picture/video changes let the old Android view's process-wide `unbindAll()` interrupt the new recording. CameraView now stays mounted while Expo reconfigures its mode/facing; capture still waits for the matching readiness event. The fix is loaded on the test phone; the user's recording retry is pending.
+- Six actual CameraScreen regressions cover the stable native instance, readiness, failure/retry, release during preparation, facing changes, background cancellation and first microphone permission. Restoring the previous key makes four fail. These adapters verify component/controller behavior, not native camera success.
+- Received video now pauses and snapshots playback directly in release, cancellation, background, focus loss and expiry handlers before clearing media. Layout cleanup precedes Expo's automatic player release, and failure to read position cannot skip pause. Reholds preserve position; account changes clear it. Ten actual-component video regressions cover these paths and player/source continuity across renewal; nine fail against the prior implementation. Physical playback/audio confirmation remains pending.
+- All **93 mobile tests**, mobile lint/TypeScript and both Android/iOS JS exports pass. Video upload/delivery, actual audio stop/resume, ten-second native capture and larger-video playback remain required device evidence; the successful photo flow does not complete them.
+
 ### DIRECT-01: local two-account native photo sharing verified — 23 October
 
 - Moved **Send on Peekalo** above external-link creation and made sending the primary action. The exact-username flow creates owner-scoped recipient grants; this does not add a friends/search system or chat. Copy now accurately describes acceptance of the moment in Inbox.

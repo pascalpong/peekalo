@@ -203,7 +203,9 @@ export default function CameraScreen() {
   return <View style={styles.screen}>
     {focused && <StatusBar style="light" />}
     <View style={[styles.frame, frame]}>
-      {showCamera && <CameraView key={`${facing}-${mode}`} ref={camera} style={styles.preview} facing={facing}
+      {/* Expo rebinds mode/facing on this native view. Remounting it here lets the
+          old Android view's global unbindAll() tear down the new recording. */}
+      {showCamera && <CameraView ref={camera} style={styles.preview} facing={facing}
         mirror={facing === 'front'} mode={mode} ratio="16:9" videoQuality="1080p" mute={false}
         onCameraReady={() => {
           if (latestViewIdentity.current !== viewIdentity || !showCamera) return;

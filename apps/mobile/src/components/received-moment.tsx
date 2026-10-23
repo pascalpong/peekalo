@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { preventScreenCaptureAsync, allowScreenCaptureAsync, enableAppSwitcherProtectionAsync, disableAppSwitcherProtectionAsync } from 'expo-screen-capture';
 import { useFocusEffect } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
@@ -19,22 +19,35 @@ function serializeProtection(operation: () => Promise<void>) {
   return pending;
 }
 
-function ReceivedVideo({ reveal, onError, position }: { reveal: Reveal; onError: () => void; position: { current: number } }) {
+function ReceivedVideo({ reveal, onError, position, pausePlayback }: { reveal: Reveal; onError: () => void; position: { current: number }; pausePlayback: { current: (() => void) | null } }) {
   const player = useVideoPlayer({ uri: reveal.uri, headers: { Authorization: reveal.authorization }, useCaching: false }, p => {
     p.allowsExternalPlayback = false;
     p.loop = false;
     p.currentTime = position.current;
     p.timeUpdateEventInterval = 0.1;
-    p.play();
   });
-  useEffect(() => {
+  const pause = useCallback(() => {
+    // A failed position read must never prevent the audio pause itself.
+    try { const current = player.currentTime; if (Number.isFinite(current) && current >= 0) position.current = current; } catch { /* The native player may already be unavailable. */ }
+    try { player.pause(); } catch { /* Already released or interrupted. */ }
+  }, [player, position]);
+  useLayoutEffect(() => {
     const subscription = player.addListener('statusChange', e => { if (e.status === 'error') onError(); });
-    const time = player.addListener('timeUpdate', e => { position.current = e.currentTime; });
+    const time = player.addListener('timeUpdate', e => { if (Number.isFinite(e.currentTime) && e.currentTime >= 0) position.current = e.currentTime; });
     return () => {
-      try { position.current = player.currentTime; player.pause(); } catch { /* Player may already be released. */ }
+      // Layout cleanup runs before useVideoPlayer's passive auto-release. The
+      // parent may already have captured/reset this position during sign-out.
+      if (pausePlayback.current === pause) { pause(); pausePlayback.current = null; }
+      else { try { player.pause(); } catch { /* Already stopped/released. */ } }
       subscription.remove(); time.remove();
     };
-  }, [onError, player, position]);
+  }, [onError, pause, pausePlayback, player, position]);
+  useLayoutEffect(() => {
+    // A fresh grant may arrive in the same commit as local expiry. Resume the
+    // existing player only after that grant has restored the callback.
+    pausePlayback.current = pause;
+    player.play();
+  }, [pause, pausePlayback, player, reveal]);
   return <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls={false} contentFit="contain"
     surfaceType="textureView" allowsPictureInPicture={false} fullscreenOptions={{ enable: false }} />;
 }
@@ -47,6 +60,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   const [busy, setBusy] = useState(false);
   const session = useRef(newIdempotencyKey());
   const videoPosition = useRef(0);
+  const pausePlayback = useRef<(() => void) | null>(null);
   const epoch = useRef(0);
   const held = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -57,7 +71,13 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   const identity = useRef<string | null>(null);
   const mounted = useRef(true);
 
+  const pauseVideo = useCallback(() => {
+    const pause = pausePlayback.current;
+    pausePlayback.current = null;
+    pause?.();
+  }, []);
   const stop = useCallback(() => {
+    pauseVideo();
     epoch.current++;
     held.current = false;
     abort.current?.abort();
@@ -76,7 +96,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       setBusy(false);
       setMessage(lease?.remainingMs === 0 ? 'Your viewing time is used up.' : 'Hold to reveal. Release to hide.');
     }
-  }, []);
+  }, [pauseVideo]);
 
   useEffect(() => {
     mounted.current = true;
@@ -115,6 +135,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
           if (next !== identity.current || event === 'SIGNED_OUT') {
             identity.current = next;
             stop();
+            videoPosition.current = 0;
             setRemaining(10_000);
             setMessage(next ? 'Hold to reveal. Release to hide.' : 'Sign in to view this moment.');
           }
@@ -195,6 +216,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
           if (expiry.current) clearTimeout(expiry.current);
           expiry.current = setTimeout(() => {
             if (!valid()) return;
+            pauseVideo();
             setReveal(null);
             setRemaining(lease.remainingMs);
             if (duration !== undefined || lease.remainingMs === 0) { stop(); return; }
@@ -230,12 +252,13 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       const left = reveal.deadline - performance.now();
       setRemaining(Math.max(0, Math.min(10_000, reveal.remainingMs + Math.max(0, left))));
       if (left <= 0) {
+        pauseVideo();
         setReveal(null);
         setMessage('Opening your next glimpse…');
       }
     }, 50);
     return () => clearInterval(ticker);
-  }, [reveal]);
+  }, [pauseVideo, reveal]);
 
   const mediaFailed = useCallback(() => { stop(); setMessage('The moment couldn’t load. Hold to try again.'); }, [stop]);
   return <View style={styles.section}>
@@ -253,7 +276,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       }}>
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         {reveal ? kind === 'photo' ? <Image source={{ uri: reveal.uri, headers: { Authorization: reveal.authorization }, cache: 'reload' }}
-          style={StyleSheet.absoluteFill} resizeMode="contain" onError={mediaFailed} /> : <ReceivedVideo reveal={reveal} onError={mediaFailed} position={videoPosition} />
+          style={StyleSheet.absoluteFill} resizeMode="contain" onError={mediaFailed} /> : <ReceivedVideo reveal={reveal} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />
           : <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View>}
       </View>
     </View>
