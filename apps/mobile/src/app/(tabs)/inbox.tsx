@@ -1,6 +1,6 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, colors, Eyebrow, Screen, typography } from '../../components/ui';
 import { ShareCapture } from '../../components/share-capture';
@@ -15,28 +15,99 @@ export default function InboxScreen() {
   const [signedIn, setSignedIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    setBusy(true); setError(null);
-    try {
-      const client = await getSharingClient();
-      const { data } = await client.auth.getSession();
-      setSignedIn(!!data.session);
-      if (!data.session) { setItems([]); return; }
-      const response = await apiRequest<{ items: InboxItem[] }>('/api/inbox');
-      setItems(response.items);
-    } catch { setError('Cannot load your inbox. Check your connection and try again.'); }
-    finally { setBusy(false); }
+  const focused = useRef(false);
+  const identity = useRef<string | null | undefined>(undefined);
+  const generation = useRef(0);
+  const request = useRef<AbortController | null>(null);
+  const busyAction = useRef<'refresh' | 'accept' | null>(null);
+  const subscribeAuth = useRef<((client: Awaited<ReturnType<typeof getSharingClient>>) => void) | null>(null);
+  const cancelRequests = useCallback(() => {
+    generation.current++;
+    request.current?.abort();
+    request.current = null;
+    busyAction.current = null;
   }, []);
-  useFocusEffect(useCallback(() => { void refresh(); return () => setSelected(null); }, [refresh]));
-  const accept = async (item: InboxItem) => {
-    if (busy) return;
+  const refresh = useCallback(async () => {
+    if (!focused.current || busyAction.current === 'accept') return;
+    cancelRequests();
+    const controller = new AbortController();
+    const turn = generation.current;
+    request.current = controller;
+    busyAction.current = 'refresh';
+    const current = () => focused.current && !controller.signal.aborted && generation.current === turn;
     setBusy(true); setError(null);
     try {
-      await apiRequest(`/api/inbox/${item.postId}/accept`, { body: {} });
-      setSelected({ ...item, requestState: 'accepted' });
-      await refresh();
-    } catch { setError('The request could not be accepted. Please try again.'); }
-    finally { setBusy(false); }
+      const client = await getSharingClient(controller.signal);
+      if (!current()) return;
+      subscribeAuth.current?.(client);
+      if (!current()) return;
+      const { data, error: sessionError } = await client.auth.getSession();
+      if (!current()) return;
+      if (sessionError) throw sessionError;
+      const accountId = data.session?.user.id ?? null;
+      if (identity.current !== accountId) {
+        identity.current = accountId;
+        setSelected(null); setItems([]);
+      }
+      setSignedIn(!!accountId);
+      if (!accountId) { setItems([]); return; }
+      const response = await apiRequest<{ items: InboxItem[] }>('/api/inbox', { signal: controller.signal });
+      if (current()) setItems(response.items);
+    } catch {
+      if (current()) setError('Cannot load your inbox. Check your connection and try again.');
+    } finally {
+      if (current()) { request.current = null; busyAction.current = null; setBusy(false); }
+    }
+  }, [cancelRequests]);
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    const controller = new AbortController();
+    let unsubscribe: (() => void) | undefined;
+    subscribeAuth.current = client => {
+      if (controller.signal.aborted || unsubscribe) return;
+      const { data } = client.auth.onAuthStateChange((_event, session) => {
+        if (controller.signal.aborted) return;
+        const accountId = session?.user.id ?? null;
+        if (identity.current === accountId) return;
+        cancelRequests();
+        identity.current = accountId;
+        setSelected(null); setItems([]); setSignedIn(!!accountId); setBusy(false); setError(null);
+        // Keep authenticated requests outside Supabase's synchronous auth callback.
+        void Promise.resolve().then(() => { if (!controller.signal.aborted) void refresh(); });
+      });
+      unsubscribe = () => data.subscription.unsubscribe();
+    };
+    void refresh();
+    return () => {
+      focused.current = false;
+      controller.abort();
+      unsubscribe?.();
+      subscribeAuth.current = null;
+      cancelRequests();
+      setSelected(null); setItems([]); setBusy(false); setError(null); setAccount(false);
+    };
+  }, [cancelRequests, refresh]));
+  const accept = async (item: InboxItem) => {
+    // State updates are asynchronous; the ref closes the double-tap window.
+    if (!focused.current || busyAction.current || !identity.current) return;
+    const controller = new AbortController();
+    const turn = ++generation.current;
+    request.current = controller;
+    busyAction.current = 'accept';
+    const current = () => focused.current && !controller.signal.aborted && generation.current === turn;
+    setBusy(true); setError(null);
+    try {
+      const response = await apiRequest<{ requestState: string }>(`/api/inbox/${item.postId}/accept`, { body: {}, signal: controller.signal });
+      if (!current()) return;
+      if (response.requestState !== 'accepted') throw new Error('Request not accepted');
+      const accepted = { ...item, requestState: 'accepted' as const };
+      setItems(previous => previous.map(entry => entry.postId === item.postId ? accepted : entry));
+      setSelected(accepted);
+    } catch {
+      if (current()) setError('The request could not be accepted. Please try again.');
+    } finally {
+      if (current()) { request.current = null; busyAction.current = null; setBusy(false); }
+    }
   };
   return <Screen>
     <Eyebrow>For your eyes</Eyebrow>
@@ -48,7 +119,7 @@ export default function InboxScreen() {
       <Text style={typography.body}>Only moments shared with your account appear here.</Text>
       <View style={styles.actions}>
         <Button secondary label={signedIn ? 'Your account' : 'Sign in'} icon="user" onPress={() => setAccount(true)} />
-        <Pressable accessibilityRole="button" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Feather name="refresh-cw" size={21} color={colors.text} /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Refresh inbox" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Feather name="refresh-cw" size={21} color={colors.text} /></Pressable>
       </View>
       {busy && <ActivityIndicator color={colors.text} accessibilityLabel="Loading inbox" />}
       {!busy && items.length === 0 && <View style={styles.empty}>
@@ -60,6 +131,7 @@ export default function InboxScreen() {
         <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.text} />
           <View style={styles.sender}><Text style={typography.section}>@{item.senderUsername}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : 'Hidden · 10 seconds total'}</Text></View></View>
         <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
+          if (!focused.current || busyAction.current || !identity.current) return;
           if (item.requestState === 'pending') void accept(item); else setSelected(item);
         }} />
       </View>)}

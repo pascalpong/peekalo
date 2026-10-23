@@ -10,6 +10,15 @@ import { colors, tokens } from './ui';
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string };
 type Reveal = { uri: string; authorization: string; deadline: number; remainingMs: number };
 
+// Expo's iOS app-switcher setting is global. Finish an old focus's native
+// cleanup before a new focus can enable protection and permit media.
+let protectionQueue: Promise<void> = Promise.resolve();
+function serializeProtection(operation: () => Promise<void>) {
+  const pending = protectionQueue.then(operation);
+  protectionQueue = pending.catch(() => undefined);
+  return pending;
+}
+
 function ReceivedVideo({ reveal, onError, position }: { reveal: Reveal; onError: () => void; position: { current: number } }) {
   const player = useVideoPlayer({ uri: reveal.uri, headers: { Authorization: reveal.authorization }, useCaching: false }, p => {
     p.allowsExternalPlayback = false;
@@ -44,41 +53,93 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   const activeLease = useRef<Reveal | null>(null);
   const abort = useRef<AbortController | null>(null);
   const bounds = useRef({ width: 0, height: 0 });
-  const accessibleEnd = useRef<number | null>(null);
-  const protectionKey = useRef(`received-${newIdempotencyKey()}`);
+  const expiry = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const identity = useRef<string | null>(null);
+  const mounted = useRef(true);
 
   const stop = useCallback(() => {
     epoch.current++;
     held.current = false;
-    accessibleEnd.current = null;
     abort.current?.abort();
     abort.current = null;
     if (timer.current) clearTimeout(timer.current);
+    if (expiry.current) clearTimeout(expiry.current);
     timer.current = null;
-    setReveal(null);
-    setBusy(false);
+    expiry.current = null;
+    // Release discards unused prepaid time, without retaining another
+    // account's media URL or bearer credential for the next hold.
+    const lease = activeLease.current;
+    activeLease.current = null;
+    if (mounted.current) {
+      if (lease) setRemaining(lease.remainingMs);
+      setReveal(null);
+      setBusy(false);
+      setMessage(lease?.remainingMs === 0 ? 'Your viewing time is used up.' : 'Hold to reveal. Release to hide.');
+    }
   }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; stop(); };
+  }, [stop]);
 
   useFocusEffect(useCallback(() => {
     let alive = true;
-    const key = protectionKey.current;
+    let authRevision = 0;
+    let unsubscribe: (() => void) | undefined;
+    const setup = new AbortController();
+    const key = `received-${newIdempotencyKey()}`;
+    let released = false;
+    const releaseProtection = () => {
+      if (released) return;
+      released = true;
+      void serializeProtection(async () => {
+        try { await allowScreenCaptureAsync(key); }
+        finally { if (Platform.OS === 'ios') await disableAppSwitcherProtectionAsync(); }
+      }).catch(() => undefined);
+    };
+    setProtectedScreen(false);
     void (async () => {
       try {
-        await preventScreenCaptureAsync(key);
-        if (Platform.OS === 'ios') await enableAppSwitcherProtectionAsync(1);
-        if (alive) setProtectedScreen(true);
-        else { await allowScreenCaptureAsync(key); if (Platform.OS === 'ios') await disableAppSwitcherProtectionAsync(); }
-      } catch { if (alive) setMessage('Protected viewing couldn’t start. Close and try again.'); }
+        await serializeProtection(async () => {
+          await preventScreenCaptureAsync(key);
+          if (Platform.OS === 'ios') await enableAppSwitcherProtectionAsync(1);
+        });
+        if (!alive) return;
+        const client = await getSharingClient(setup.signal);
+        if (!alive) return;
+        const { data: subscription } = client.auth.onAuthStateChange((event, session) => {
+          if (!alive) return;
+          authRevision++;
+          const next = session?.user.id ?? null;
+          if (next !== identity.current || event === 'SIGNED_OUT') {
+            identity.current = next;
+            stop();
+            setRemaining(10_000);
+            setMessage(next ? 'Hold to reveal. Release to hide.' : 'Sign in to view this moment.');
+          }
+        });
+        unsubscribe = () => subscription.subscription.unsubscribe();
+        const revision = authRevision;
+        const { data, error } = await client.auth.getSession();
+        if (!alive) return;
+        if (error) throw error;
+        if (revision === authRevision) identity.current = data.session?.user.id ?? null;
+        setMessage(identity.current ? 'Hold to reveal. Release to hide.' : 'Sign in to view this moment.');
+        setProtectedScreen(true);
+      } catch { releaseProtection(); if (alive) setMessage('Protected viewing couldn’t start. Close and try again.'); }
     })();
     const change = AppState.addEventListener('change', state => { if (state !== 'active') stop(); });
     const blur = AppState.addEventListener('blur', stop);
     return () => {
       alive = false;
+      setup.abort();
+      unsubscribe?.();
       stop();
-      setProtectedScreen(false);
+      identity.current = null;
+      if (mounted.current) setProtectedScreen(false);
       change.remove(); blur.remove();
-      void allowScreenCaptureAsync(key).catch(() => undefined);
-      if (Platform.OS === 'ios') void disableAppSwitcherProtectionAsync().catch(() => undefined);
+      releaseProtection();
     };
   }, [stop]));
 
@@ -86,58 +147,77 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     if (!protectedScreen || held.current || AppState.currentState !== 'active') return;
     held.current = true;
     const current = ++epoch.current;
-    accessibleEnd.current = duration ? performance.now() + duration : null;
+    const viewer = identity.current;
     setBusy(true);
     setMessage('Opening your moment…');
     const controller = new AbortController();
     abort.current = controller;
-    const valid = () => held.current && epoch.current === current && !controller.signal.aborted && AppState.currentState === 'active';
+    const valid = () => mounted.current && held.current && epoch.current === current && identity.current === viewer && !controller.signal.aborted && AppState.currentState === 'active';
+    let pending = false;
+    let renewalWaitStarted: number | null = null;
     try {
-      const client = await getSharingClient();
-      const { data } = await client.auth.getSession();
-      if (!data.session) throw new SharingError('Please sign in again.');
+      const client = await getSharingClient(controller.signal);
+      const { data, error } = await client.auth.getSession();
+      if (!valid()) return;
+      if (error || !data.session || data.session.user.id !== viewer) throw new SharingError('Please sign in again.');
       const authorization = `Bearer ${data.session.access_token}`;
       const tick = async () => {
-        if (!valid()) return;
+        if (!valid() || pending) return;
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = null;
+        pending = true;
+        const sentAt = performance.now();
         const previous = activeLease.current;
         try {
-          // Reuse unspent milliseconds of this session after a short release.
-          if (!previous || previous.deadline - performance.now() <= 610) {
-            const response = await apiRequest<Lease>('/api/view/direct', {
-              body: { postId, sessionId: session.current, requestId: newIdempotencyKey() }, signal: controller.signal,
-            });
-            if (!valid()) return;
-            const serverMs = Date.parse(response.expiresAt) - Date.now();
-            const deadline = performance.now() + Math.max(0, Math.min(serverMs, (previous ? Math.max(0, previous.deadline - performance.now()) : 0) + response.grantedMs));
-            const mediaUrl = new URL(response.mediaUrl, resolveApiUrl('/'));
-            if (mediaUrl.origin !== new URL(resolveApiUrl('/')).origin) throw new Error('Invalid delivery origin');
-            activeLease.current = {
-              uri: previous && previous.deadline > performance.now() ? previous.uri : mediaUrl.toString(),
-              authorization, deadline, remainingMs: response.remainingMs,
-            };
-          }
-          const lease = activeLease.current;
-          if (!lease || lease.deadline <= performance.now()) { stop(); return; }
+          const response = await apiRequest<Lease>('/api/view/direct', {
+            body: { postId, sessionId: session.current, requestId: newIdempotencyKey() }, signal: controller.signal,
+          });
           if (!valid()) return;
+          const serverExpires = Date.parse(response.expiresAt);
+          if (typeof response.leaseId !== 'string' || !/^[a-f0-9-]{36}$/i.test(response.leaseId) ||
+            !Number.isFinite(response.grantedMs) || response.grantedMs <= 0 || response.grantedMs > 2_000 ||
+            !Number.isFinite(response.remainingMs) || response.remainingMs < 0 || response.remainingMs > 10_000 || !Number.isFinite(serverExpires)) throw new Error('Invalid viewing allowance');
+          const mediaUrl = new URL(response.mediaUrl, resolveApiUrl('/'));
+          if (mediaUrl.origin !== new URL(resolveApiUrl('/')).origin || mediaUrl.pathname !== `/api/view/media/${response.leaseId}` || mediaUrl.search || mediaUrl.hash) throw new Error('Invalid delivery path');
+          const now = performance.now();
+          const deadline = Math.min(Math.max(sentAt, previous?.deadline ?? 0) + response.grantedMs, now + Math.max(0, serverExpires - Date.now()));
+          const lease: Reveal = {
+            uri: previous && previous.deadline > now ? previous.uri : mediaUrl.toString(),
+            authorization, deadline, remainingMs: response.remainingMs,
+          };
+          activeLease.current = lease;
+          renewalWaitStarted = null;
+          setRemaining(Math.min(10_000, lease.remainingMs + Math.max(0, deadline - now)));
+          if (deadline <= now) { stop(); return; }
           setBusy(false);
           setReveal(lease);
-          setRemaining(lease.remainingMs + Math.max(0, lease.deadline - performance.now()));
           setMessage('Revealed · release to hide');
-          const until = accessibleEnd.current === null ? Infinity : accessibleEnd.current - performance.now();
-          if (until <= 0) { stop(); return; }
-          if (lease.remainingMs === 0 || until < lease.deadline - performance.now()) {
-            timer.current = setTimeout(() => { setRemaining(lease.remainingMs); stop(); }, Math.max(1, Math.min(until, lease.deadline - performance.now())));
-          } else timer.current = setTimeout(() => { void tick(); }, Math.max(30, lease.deadline - performance.now() - 600));
+          if (expiry.current) clearTimeout(expiry.current);
+          expiry.current = setTimeout(() => {
+            if (!valid()) return;
+            setReveal(null);
+            setRemaining(lease.remainingMs);
+            if (duration !== undefined || lease.remainingMs === 0) { stop(); return; }
+            setBusy(true);
+            setMessage('Opening your next glimpse…');
+            if (!pending) void tick();
+          }, Math.max(0, Math.min(duration ?? Infinity, deadline - performance.now())));
+          if (duration === undefined && lease.remainingMs > 0) {
+            timer.current = setTimeout(() => { void tick(); }, Math.max(0, deadline - performance.now() - 600));
+          }
         } catch (error) {
           if (!valid()) return;
           if (error instanceof SharingError && error.code === 'renew_later') {
-            timer.current = setTimeout(() => { void tick(); }, 50);
-            return;
+            renewalWaitStarted ??= performance.now();
+            if (performance.now() - renewalWaitStarted < 3_000) {
+              timer.current = setTimeout(() => { void tick(); }, 100);
+              return;
+            }
           }
           stop();
           setMessage(error instanceof SharingError && error.code === 'exhausted' ? 'Your viewing time is used up.' : 'This moment is unavailable. Try again in a moment.');
           if (error instanceof SharingError && error.code === 'exhausted') setRemaining(0);
-        }
+        } finally { pending = false; }
       };
       await tick();
     } catch { if (valid()) { stop(); setMessage('Sign in to view this moment.'); } }
@@ -145,17 +225,17 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
 
   useEffect(() => {
     if (!reveal) return;
-    const timer = setInterval(() => {
+    const ticker = setInterval(() => {
+      if (!held.current || activeLease.current !== reveal) return;
       const left = reveal.deadline - performance.now();
-      setRemaining(Math.max(0, reveal.remainingMs + left));
+      setRemaining(Math.max(0, Math.min(10_000, reveal.remainingMs + Math.max(0, left))));
       if (left <= 0) {
-        // A slow renewal may still be in flight. Cover immediately until it grants a fresh lease.
         setReveal(null);
         setMessage('Opening your next glimpse…');
       }
     }, 50);
-    return () => clearInterval(timer);
-  }, [reveal, stop]);
+    return () => clearInterval(ticker);
+  }, [reveal]);
 
   const mediaFailed = useCallback(() => { stop(); setMessage('The moment couldn’t load. Hold to try again.'); }, [stop]);
   return <View style={styles.section}>

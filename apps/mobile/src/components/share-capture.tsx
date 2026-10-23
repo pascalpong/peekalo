@@ -271,16 +271,16 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
           </View>}
           {stage === 'ready' && <View style={styles.section}>
             <Text style={styles.signedIn}>Signed in as @{username}</Text>
-            {capture ? <><View style={styles.option}><Feather name="link" size={25} color={colors.text} /><Text style={styles.heading}>Create a single-use link</Text>
-              <Text style={styles.body}>The first person to deliberately reveal claims the link. They get ten seconds total. Anyone who receives the link can be that first viewer. Browsers can save revealed media.</Text>
-              <Action label={hasLink ? 'Share link' : 'Create a single-use link'} onPress={createLink} disabled={busy} />
-              {hasLink && <Action secondary label="Revoke link" onPress={revokeLink} disabled={busy} />}
-            </View>
-            <View style={styles.option}><Feather name="send" size={25} color={colors.text} /><Text style={styles.heading}>Send on Peekalo</Text>
-              <Text style={styles.body}>A new recipient must accept your request before viewing.</Text>
+            {capture ? <><View style={styles.option}><Feather name="send" size={25} color={colors.text} /><Text style={styles.heading}>Send on Peekalo</Text>
+              <Text style={styles.body}>Your recipient accepts this moment in their Inbox before viewing.</Text>
               <TextInput style={styles.input} accessibilityLabel="Recipient username" placeholder="@username" placeholderTextColor={colors.muted} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} maxLength={25} editable={!busy} />
               {lastRecipient && <Action secondary label={`Revoke @${lastRecipient} access`} onPress={revokeRecipient} disabled={busy} />}
-              <Action label="Send to recipient" onPress={sendToRecipient} disabled={busy || !recipient.trim()} secondary />
+              <Action label="Send to recipient" onPress={sendToRecipient} disabled={busy || !recipient.trim()} />
+            </View>
+            <View style={styles.option}><Feather name="link" size={25} color={colors.text} /><Text style={styles.heading}>Create a single-use link</Text>
+              <Text style={styles.body}>The first person to deliberately reveal claims the link. They get ten seconds total. Anyone who receives the link can be that first viewer. Browsers can save revealed media.</Text>
+              <Action label={hasLink ? 'Share link' : 'Create a single-use link'} onPress={createLink} disabled={busy} secondary />
+              {hasLink && <Action secondary label="Revoke link" onPress={revokeLink} disabled={busy} />}
             </View></> : <View style={styles.option}><Text style={styles.heading}>You’re ready, @{username}.</Text><Text style={styles.body}>Moments shared with you appear in Inbox.</Text><Action label="Done" onPress={close} disabled={busy} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></View>}
           </View>}
           {busy && stage !== 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text accessibilityLiveRegion="polite" style={styles.body}>{progress || 'Please wait…'}</Text></View>}
