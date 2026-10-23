@@ -18,6 +18,8 @@ export function FullscreenReveal({ children, seconds, onDismiss }: {
     // Preserve the page's content width when hiding its scrollbar, so the
     // initiating card neither moves nor changes its captured pointer hit area.
     const root = document.documentElement;
+    const viewportWidth = window.innerWidth;
+    const orientation = window.screen?.orientation?.type;
     const overflow = root.style.overflow;
     const padding = root.style.paddingRight;
     const gutter = window.innerWidth - root.clientWidth;
@@ -27,17 +29,26 @@ export function FullscreenReveal({ children, seconds, onDismiss }: {
     const key = (event: KeyboardEvent) => {
       if (['Escape', 'Tab', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) onDismiss();
     };
+    const resize = () => {
+      // Android Chrome can emit resize as scroll locking/browser controls
+      // settle, even with unchanged dimensions. Keep that deliberate hold;
+      // width/orientation changes still interrupt it, as do the caller's
+      // release, cancellation, blur and visibility handlers.
+      if (window.innerWidth !== viewportWidth || window.screen?.orientation?.type !== orientation) onDismiss();
+    };
     window.addEventListener('wheel', preventScroll, { passive: false });
     window.addEventListener('touchmove', preventScroll, { passive: false });
     window.addEventListener('keydown', key);
-    window.addEventListener('resize', onDismiss);
+    window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', onDismiss);
     return () => {
       root.style.overflow = overflow;
       root.style.paddingRight = padding;
       window.removeEventListener('wheel', preventScroll);
       window.removeEventListener('touchmove', preventScroll);
       window.removeEventListener('keydown', key);
-      window.removeEventListener('resize', onDismiss);
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('orientationchange', onDismiss);
     };
   }, [onDismiss]);
 
