@@ -240,7 +240,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     {/* A native modal has its own window; measure its insets independently of the tab screen. */}
     <SafeAreaProvider style={styles.safe}>
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.header}><BrandLogo />
           <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
         </View>
