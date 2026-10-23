@@ -32,7 +32,7 @@ Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished e
 - [ ] Test a photo and a <=10-second video; stop both video and audio when hidden.
 - [ ] Verify clear media never appears before protection and authorization are ready.
 - [ ] Measure first-load overhead and latency; choose lease granularity and wording.
-- [ ] Verify Android OS screenshot/recording behavior on a physical device. On Samsung / Android 17, the received-moment window has FLAG_SECURE and the user confirmed the hardware screenshot shortcut was blocked while hidden. Recording, revealed-state, Recent apps and interruption checks remain pending.
+- [ ] Verify Android OS screenshot/recording behavior on a physical device. On Samsung / Android 17, the received-moment window has FLAG_SECURE and the user confirmed the hardware screenshot shortcut was blocked while hidden. The user also confirmed black/blocked Samsung screen recording of the same hidden screen. Revealed-state, Recent apps and interruption checks remain pending.
 - [ ] Verify the selected Expo/iOS package on a physical iPhone in a release build.
 - [ ] Record limitations and product wording; web is capturable after reveal.
 
