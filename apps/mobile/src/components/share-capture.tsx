@@ -3,7 +3,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, SharingError, signInWithGoogle, type AuthProviders } from '../lib/sharing-client';
+import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, SharingError, signInWithGoogle, type AuthProviders } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
 import { BrandLogo } from './brand';
 import { requestPasswordRecovery, subscribePasswordRecovery } from '../lib/auth-recovery';
@@ -34,6 +34,10 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   const operation = useRef<AbortController | null>(null);
   const draft = useRef<Draft | null>(null);
   const busyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const committingRef = useRef(false);
+  const [committing, setCommitting] = useState(false);
+  function commitChanged(value: boolean) { committingRef.current = value; if (mountedRef.current) setCommitting(value); }
   const generation = useRef(0);
   const callback = useRef(onBusyChange);
   callback.current = onBusyChange;
@@ -48,7 +52,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     busyRef.current = false;
     callback.current?.(false);
   }
-  useEffect(() => () => { cancelOperation(); }, []);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; cancelOperation(); }; }, []);
   useEffect(() => {
     if (!visible) return;
     return subscribePasswordRecovery(() => {
@@ -118,10 +122,8 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
 
   function authenticate() {
     void run(async (current, signal) => {
-      const client = await getSharingClient(signal);
-      if (!current()) return;
       const credentials = { email: email.trim(), password };
-      const result = signingUp ? await client.auth.signUp(credentials) : await client.auth.signInWithPassword(credentials);
+      const result = await performAccountAuth(client => signingUp ? client.auth.signUp(credentials) : client.auth.signInWithPassword(credentials), signal, commitChanged);
       if (!current()) return;
       if (result.error) {
         const code = result.error.code;
@@ -141,7 +143,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
 
   function continueWithGoogle() {
     void run(async (current, signal) => {
-      const signedIn = await signInWithGoogle(signal);
+      const signedIn = await signInWithGoogle(signal, commitChanged);
       if (signedIn && current()) await loadAccount(current, signal);
     });
   }
@@ -240,9 +242,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
 
   function signOut() {
     void run(async (current, signal) => {
-      const client = await getSharingClient(signal);
-      if (!current()) return;
-      const { error: signOutError } = await client.auth.signOut({ scope: 'local' });
+      const { error: signOutError } = await performAccountAuth(client => client.auth.signOut({ scope: 'local' }), signal, commitChanged, { restoreOnCancel: false });
       if (signOutError) throw new SharingError('Sign-out did not finish. Please try again.');
       if (current()) {
         draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
@@ -254,16 +254,17 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     });
   }
 
-  const close = () => { cancelOperation(); setBusy(false); setProgress(''); setPassword(''); onClose(); };
+  const close = () => { if (committingRef.current) return; cancelOperation(); setBusy(false); setProgress(''); setPassword(''); onClose(); };
   return <Modal visible={visible} animationType="slide" onRequestClose={close} presentationStyle="fullScreen">
     {/* A native modal has its own window; measure its insets independently of the tab screen. */}
     <SafeAreaProvider style={styles.safe}>
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.header}><BrandLogo />
-          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Close sharing" disabled={committing} accessibilityState={{ disabled: committing }} onPress={close} style={styles.close}><Feather name="x" size={24} color={colors.text} /></Pressable>
         </View>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+          {committing && <Text accessibilityRole="alert" style={styles.body}>Finishing your account change. Please keep this screen open for a moment.</Text>}
           <Text style={styles.eyebrow}>{capture ? 'A MOMENT FOR SOMEONE' : 'YOUR PEEKALO ACCOUNT'}</Text>
           <Text style={styles.title}>{capture ? `Share your ${capture.kind}.` : 'A little closer.'}</Text>
           <Text style={styles.body}>{capture ? 'Your capture stays private. Choose a Peekalo recipient or create a single-use link.' : 'Sign in to receive and share moments on Peekalo.'}</Text>

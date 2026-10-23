@@ -100,6 +100,13 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
+### ACCOUNT-03: hosted Google sign-in — 23 October (in progress)
+
+- The live hosted bootstrap and Supabase settings confirm Google/email providers are enabled. A separate Metro on 8084 selects the hosted API with local mode off; local 8083 and its accounts stay separate. Only the disposable Peekalo Test package is used for the hosted phone test.
+- Source review found that a canceled OAuth exchange could still persist an ordinary login before its late result was ignored. It also found that the pinned SDK supplies a per-flow identifier which the current exchange did not pass back. The implementation now exchanges through a per-attempt, memory-only client, passes the exact SDK flow ID and validates callback shape before normal login can change. A module gate allows one browser attempt; email/sign-out/Google final transfer share a serialized commit queue, with synchronous close/Back guards and cancellation compensation before a newer login. Canceled sign-out never restores a revoked refresh token. Main, OAuth and recovery Auth transport requests have a 30-second timeout.
+- All **136 mobile tests**, mobile lint/TypeScript and both native JS exports pass. Twenty-nine added actual-code/component regressions cover isolated exchange, per-flow verification, malformed callbacks, cancellation, overlapping operations, commit guards/rollback, non-restoration after sign-out and bounded transport.
+- Actual Google selection/callback/username setup and cancel/retry remain unverified. Both installed test packages advertise the same custom scheme, so a development callback chooser must target Peekalo Test. General email delivery still needs the previously deferred domain/provider.
+
 ### ACCOUNT-02: local native password recovery verified — 23 October
 
 - Added the exact `peekalo://reset-password` redirect to isolated local configuration and the existing hosted Supabase allowlist, retaining the Google callback and hosted Site URL. The local backend restarted with its data volumes preserved; both test shares and their exhausted ledgers remain intact.

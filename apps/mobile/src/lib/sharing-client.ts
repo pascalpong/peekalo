@@ -125,6 +125,7 @@ export async function getPasswordRecoveryClient(signal?: AbortSignal) {
       },
     };
     recoveryClient = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+      global: { fetch: authFetch },
       auth: { storage, storageKey: key, persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'pkce', lock: processLock },
     });
     recoveryClient.auth.stopAutoRefresh();
@@ -155,6 +156,21 @@ async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: 
   else signal?.addEventListener('abort', cancel, { once: true });
   try { return await fetch(url, { ...options, signal: controller.signal }); }
   finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
+}
+
+// Bound Auth requests as well as product requests. Preserve the SDK's abort
+// signal and, for isolated OAuth, also observe the screen's lifetime.
+function authFetch(input: RequestInfo | URL, init?: RequestInit, screenSignal?: AbortSignal) {
+  const controller = new AbortController();
+  const signals = [init?.signal, screenSignal].filter((signal): signal is AbortSignal => !!signal);
+  const abort = () => controller.abort();
+  for (const signal of signals) {
+    if (signal.aborted) abort();
+    else signal.addEventListener('abort', abort, { once: true });
+  }
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  return requestWithTimeout(url, { ...init, signal: controller.signal }, 30_000)
+    .finally(() => { for (const signal of signals) signal.removeEventListener('abort', abort); });
 }
 
 const cancelled = () => new SharingError('The request was cancelled.', 'cancelled');
@@ -195,8 +211,9 @@ export function getSharingClient(signal?: AbortSignal): Promise<SupabaseClient> 
         throw new SharingError('Sharing is not connected yet. Please try again after the server is configured.', 'not_configured');
       }
       authConfig = { supabaseUrl: config.supabaseUrl, supabaseAnonKey: config.supabaseAnonKey };
-      // PKCE keeps OAuth tokens out of the redirect URL; the verifier stays in secure storage.
+      // Persist ordinary login in encrypted native storage; URL callbacks are handled explicitly.
       const client = createClient(config.supabaseUrl, config.supabaseAnonKey, {
+        global: { fetch: authFetch },
         auth: { storage: sessionStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, flowType: 'pkce', lock: processLock },
       });
       if (AppState.currentState === 'active') client.auth.startAutoRefresh();
@@ -236,36 +253,133 @@ export async function getAuthProviders(signal?: AbortSignal): Promise<AuthProvid
   }
 }
 
-/** Returns false when the person closes the Google sheet without signing in. */
-export async function signInWithGoogle(signal?: AbortSignal): Promise<boolean> {
-  const client = await getSharingClient(signal);
-  const providers = await getAuthProviders(signal);
-  if (providers.google === false) throw new SharingError('Google sign-in is not configured on this test backend yet.', 'not_configured');
-  if (providers.google === null) throw new SharingError('Cannot check Google sign-in right now. Check your connection and try again.');
-  checkCancelled(signal);
-  const { data, error } = await client.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: authRedirectUrl, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+// Every user-triggered ordinary session mutation shares this queue. OAuth
+// exchanges stay isolated; only their final transfer enters the commit boundary.
+let accountAuthQueue: Promise<unknown> = Promise.resolve();
+let accountAuthRevision = 0;
+let googleAttemptActive = false;
+type CommitListener = (committing: boolean) => void;
+
+function commitAccountAuth<T>(action: (client: SupabaseClient) => Promise<T>, signal?: AbortSignal, onCommit?: CommitListener, oauthRevision?: number, restoreOnCancel = true): Promise<T> {
+  const current = () => {
+    checkCancelled(signal);
+    if (oauthRevision !== undefined && oauthRevision !== accountAuthRevision) throw cancelled();
+  };
+  const pending = accountAuthQueue.catch(() => undefined).then(async () => {
+    current();
+    const client = await getSharingClient(signal);
+    const previous = await client.auth.getSession();
+    current();
+    if (previous.error) throw new SharingError('Your sign-in could not be restored. Please try again.');
+    onCommit?.(true);
+    try {
+      const result = await action(client);
+      current();
+      return result;
+    } catch (error) {
+      if (signal?.aborted || (oauthRevision !== undefined && oauthRevision !== accountAuthRevision)) {
+        // Unmount cannot be blocked. Compensate inside the lock so an old
+        // completion cannot overwrite the next queued sign-in/sign-out.
+        if (!restoreOnCancel) throw cancelled(); // Sign-out revocation cannot be undone.
+        const session = previous.data.session;
+        const restored = session
+          ? await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token })
+          : await client.auth.signOut({ scope: 'local' });
+        if (restored.error) throw new SharingError('Your sign-in changed while closing. Please reopen your account and sign in again.');
+        throw cancelled();
+      }
+      throw error;
+    } finally { onCommit?.(false); }
   });
-  checkCancelled(signal);
-  if (error || !data.url) throw new SharingError('Google sign-in could not start. Please try again.');
-  const dismiss = () => { try { WebBrowser.dismissAuthSession(); } catch { /* The sheet may already be closed. */ } };
-  signal?.addEventListener('abort', dismiss, { once: true });
-  let result: WebBrowser.WebBrowserAuthSessionResult;
-  try { result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUrl); }
-  finally { signal?.removeEventListener('abort', dismiss); }
-  checkCancelled(signal);
-  if (result.type !== 'success') return false;
-  const redirect = new URL(result.url);
+  accountAuthQueue = pending.catch(() => undefined);
+  return pending;
+}
+
+/** Serialize email sign-in/signup and local sign-out with Google's final commit. */
+export function performAccountAuth<T>(action: (client: SupabaseClient) => Promise<T>, signal?: AbortSignal, onCommit?: CommitListener, options: { restoreOnCancel?: boolean } = {}): Promise<T> {
+  accountAuthRevision++;
+  return commitAccountAuth(action, signal, onCommit, undefined, options.restoreOnCancel);
+}
+
+function googleCallbackCode(raw: string, flowId: string) {
+  const invalid = () => new SharingError('Google sign-in did not finish. Please try again.');
+  let redirect: URL;
+  try { redirect = new URL(raw); } catch { throw invalid(); }
   const expected = new URL(authRedirectUrl);
-  const code = redirect.searchParams.get('code');
-  if (redirect.protocol !== expected.protocol || redirect.host !== expected.host || redirect.pathname !== expected.pathname || !code) {
-    throw new SharingError('Google sign-in did not finish. Please try again.');
+  const codes = redirect.searchParams.getAll('code');
+  const flows = redirect.searchParams.getAll('sb_flow_id');
+  if (redirect.protocol !== expected.protocol || redirect.host !== expected.host || redirect.pathname !== expected.pathname
+    || redirect.username || redirect.password || redirect.port || redirect.hash
+    || redirect.searchParams.has('error') || redirect.searchParams.has('error_code') || redirect.searchParams.has('error_description')
+    || redirect.searchParams.has('access_token') || redirect.searchParams.has('refresh_token')
+    || codes.length !== 1 || !/^[a-zA-Z0-9_-]{1,2048}$/.test(codes[0])
+    || flows.length > 1 || (flows.length === 1 && flows[0] !== flowId)) throw invalid();
+  return codes[0];
+}
+
+/** Returns false when the person closes the Google sheet without signing in. */
+export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitListener): Promise<boolean> {
+  if (googleAttemptActive) throw new SharingError('Google sign-in is already open. Finish or close it before trying again.');
+  googleAttemptActive = true;
+  const revision = ++accountAuthRevision;
+  const temporaryStorage = new Map<string, string>();
+  let oauth: SupabaseClient | undefined;
+  const current = () => {
+    checkCancelled(signal);
+    if (revision !== accountAuthRevision) throw cancelled();
+  };
+  try {
+    await getSharingClient(signal);
+    const providers = await getAuthProviders(signal);
+    if (providers.google === false) throw new SharingError('Google sign-in is not configured on this test backend yet.', 'not_configured');
+    if (providers.google === null) throw new SharingError('Cannot check Google sign-in right now. Check your connection and try again.');
+    current();
+    // Neither the PKCE verifier nor a late exchange can touch ordinary login.
+    // This attempt intentionally cannot resume after process death: restart it.
+    oauth = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+      global: { fetch: (input, init) => authFetch(input, init, signal) },
+      auth: {
+        storageKey: `oauth-${Crypto.randomUUID()}`, persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'pkce', lock: processLock,
+        storage: {
+          getItem: (key: string) => temporaryStorage.get(key) ?? null,
+          setItem: (key: string, value: string) => { temporaryStorage.set(key, value); },
+          removeItem: (key: string) => { temporaryStorage.delete(key); },
+        },
+      },
+    });
+    oauth.auth.stopAutoRefresh();
+    const { data, error } = await oauth.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: authRedirectUrl, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+    });
+    current();
+    if (error || !data.url || !data.flowId) throw new SharingError('Google sign-in could not start. Please try again.');
+    // Android cannot dismiss a Custom Tab programmatically. Back/close returns
+    // control; cancellation still prevents any callback from committing login.
+    const dismiss = () => { try { WebBrowser.dismissAuthSession(); } catch { /* Already closed or Android. */ } };
+    signal?.addEventListener('abort', dismiss, { once: true });
+    let result: WebBrowser.WebBrowserAuthSessionResult;
+    try { result = await WebBrowser.openAuthSessionAsync(data.url, authRedirectUrl); }
+    finally { signal?.removeEventListener('abort', dismiss); }
+    current();
+    if (result.type !== 'success') return false;
+    const code = googleCallbackCode(result.url, data.flowId);
+    const exchanged = await oauth.auth.exchangeCodeForSession(code, { flowId: data.flowId });
+    current();
+    const session = exchanged.data.session;
+    if (exchanged.error || !session) throw new SharingError('Google sign-in did not finish. Please try again.');
+    await commitAccountAuth(async client => {
+      const committed = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+      if (committed.error || !committed.data.session) throw new SharingError('Google sign-in did not finish. Please try again.');
+    }, signal, onCommit, revision);
+    return true;
+  } finally {
+    oauth?.auth.stopAutoRefresh();
+    // Do not sign out the temporary SDK: transferred tokens are now the normal
+    // session too. Only discard this attempt's private memory and verifiers.
+    temporaryStorage.clear();
+    googleAttemptActive = false;
   }
-  const { error: exchangeError } = await client.auth.exchangeCodeForSession(code);
-  checkCancelled(signal);
-  if (exchangeError) throw new SharingError('Google sign-in did not finish. Please try again.');
-  return true;
 }
 
 const errorMessages: Record<string, string> = {

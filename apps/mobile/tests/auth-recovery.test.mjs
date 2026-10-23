@@ -22,7 +22,7 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 
-function harness({ store = new Map(), exchange, update, request, marker = 'recovery', mainUser = 'existing-main-account' } = {}) {
+function harness({ store = new Map(), exchange, update, request, marker = 'recovery', mainUser = 'existing-main-account', login } = {}) {
   const clients = [], calls = [], logs = [], navigation = [];
   const mainSession = mainUser ? { user: { id: mainUser }, access_token: 'ordinary-login' } : null;
   let api;
@@ -65,6 +65,7 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
           calls.push({ method: 'update', attributes });
           return update ? update() : { data: { user: { id: 'recovered-account' } }, error: null };
         },
+        async signInWithPassword() { calls.push({ method: 'MAIN-LOGIN' }); return login ? login() : { data: { session: null }, error: null }; },
         async signOut() { calls.push({ method: recovery ? 'recovery-signout' : 'MAIN-SIGNOUT' }); },
         async setSession() { calls.push({ method: 'MAIN-SETSESSION' }); throw new Error('Recovery must never replace the ordinary login'); },
       } };
@@ -158,6 +159,8 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
         error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
         disabled: label => lookup(label)?.props.disabled,
         back: () => backHandler?.(),
+        modalBack: () => find(tree, node => node.type === 'Modal')?.props.onRequestClose(),
+        invokeClose: () => lookup('Close sharing')?.props.onPress(),
         gestureEnabled: () => find(tree, node => node.type === 'StackScreen')?.props.options.gestureEnabled,
         text: () => JSON.stringify(tree),
       };
@@ -326,4 +329,43 @@ test('native warm recovery callback closes the account Modal before routing to r
   assert.match(panel.text(), /If an account uses that email/);
   h.intent.redirectSystemPath({ path: 'peekalo://reset-password?code=fixture-code', initial: false });
   assert.equal(closes, 1);
+});
+
+
+test('account commit blocks both header close and native Modal Back until it settles', async t => {
+  const pending = deferred();
+  const h = harness({ mainUser: null, login: () => {
+    // Runs before React publishes the disabled close button: the ref must guard it.
+    panel.invokeClose(); panel.modalBack(); return pending.promise;
+  } });
+  let closes = 0;
+  const panel = h.mount(t, 'share', { visible: true, capture: null, onClose: () => { closes++; } });
+  await flush();
+  panel.change('Email', 'fixture@example.invalid'); panel.change('Password', 'fixture-password'); await flush();
+  panel.press('Sign in'); await flush();
+  assert.equal(panel.disabled('Close sharing'), true);
+  assert.match(panel.text(), /Finishing your account change/);
+  panel.invokeClose(); panel.modalBack();
+  assert.equal(closes, 0);
+  pending.resolve({ data: { session: null }, error: null }); await flush();
+  assert.equal(panel.disabled('Close sharing'), false);
+  panel.modalBack(); assert.equal(closes, 1);
+});
+
+test('unmount during ordinary auth commit compensates without setting stale UI state', async t => {
+  const pending = deferred();
+  const h = harness({ mainUser: null, login: () => pending.promise });
+  const panel = h.mount(t, 'share', { visible: true, capture: null, onClose() {} });
+  await flush();
+  panel.change('Email', 'fixture@example.invalid'); panel.change('Password', 'fixture-password'); await flush();
+  panel.press('Sign in'); await flush(); panel.unmount();
+  pending.resolve({ data: { session: null }, error: null }); await flush();
+  assert.equal(h.calls.filter(call => call.method === 'MAIN-SIGNOUT').length, 1);
+});
+
+
+test('recovery Auth uses the same bounded transport as ordinary account commits', async () => {
+  const h = harness(); await h.sharing.getSharingClient(); await h.sharing.getPasswordRecoveryClient();
+  assert.equal(typeof h.clients[0].options.global.fetch, 'function');
+  assert.equal(h.clients[1].options.global.fetch, h.clients[0].options.global.fetch);
 });
