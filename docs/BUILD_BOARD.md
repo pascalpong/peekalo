@@ -100,7 +100,7 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
-### HOST-06: hosted native account-to-account sharing — 24 October (hosted photo verified; direct video pending)
+### HOST-06: hosted native account-to-account sharing — 24 October (hosted photo verified; video delivery/acceptance verified, playback pending)
 
 - The phone is authorized and unlocked. Hosted Metro was restarted on port 8084. The original app already has a hosted `@testuser01` session; both existing app sessions are preserved. Native Supabase session keys are scoped by project, and no login storage was cleared.
 - Prepared a third isolated Android package, **Peekalo Receiver** (`com.peekalo.hostedreceiver`), from the same application source. Debug arm64 build passes in 29 seconds; package identity was verified before installation. Mobile lint and TypeScript pass. This is a development build, not release evidence.
@@ -109,6 +109,8 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 - The first installation exceeded the ADB timeout with Google Play in the foreground. After the user confirmed scan/installation completion, the new package was verified installed in Android user 0 and opened against hosted Metro. Native email/password sign-in reached “You’re ready” with the disposable profile. The camera permission prompt was resolved and the in-app shutter is enabled; the user has been asked to take an ordinary-object photo and leave the sharing screen open. No protection setting was disabled. The subsequent photo delivery and acceptance evidence is recorded below; native reveal confirmation is pending. This is not a two-physical-device test.
 
 - **Hosted native photo:** the user took an ordinary-object photo in the isolated app and opened Share moment. ADB filled the existing hosted account username and tapped Send to recipient. Scoped hosted metadata shows a ready private photo (**334,598 bytes**), one pending/non-revoked owner-created grant, no external link and no recipient budget entry. The original app’s Inbox displayed the request from the disposable profile. Tapping Accept request changed the server grant to accepted and opened a hidden received card showing **10.0s left**, still with no budget spent. The user confirms **“Yes — correct photo; release hides it.”** The scoped recipient ledger subsequently records **6,000 ms** spent; this is cumulative server allocation, not a measured visible duration. No private image pixels were inspected or saved. The isolated sender is back on the camera and the user has been asked for a short video for the same hosted account-to-account path.
+
+- **Hosted native video delivery:** the user recorded a short ordinary-object clip with the isolated app and opened Share moment. Native Send to recipient completed normalization/private publication on Free Render: **4,476,817 bytes**, a pending/non-revoked grant to the existing hosted account, no external links and no recipient budget entry. Refresh inbox displayed a separate video request beside the accepted photo. Native Accept request changed the video grant to accepted and opened the hidden card with **10.0s left**, still with no budget entry. Correct video/audio, release/hide/audio stop and position resume await user confirmation; no private video bytes or frames were read for diagnosis.
 
 ### HOST-05: hosted native video — 24 October (Samsung hosted link playback verified)
 
