@@ -379,3 +379,20 @@ test('ordinary Auth transport respects an SDK cancellation signal', async () => 
   const request = h.mainOptions.global.fetch('https://auth.example.invalid/pending-login', { signal: sdk.signal });
   sdk.abort(); await assert.rejects(request); assert.equal(h.timers.size, 0);
 });
+
+
+test('video preparation failures preserve their code and show safe retry guidance without server diagnostics', async () => {
+  for (const code of ['invalid_video', 'video_processing_failed', 'video_processing_timeout']) {
+    const h = harness({ fetch: url => url.endsWith('/config') ? config() : Response.json({
+      error: code, details: 'private fixture diagnostics and storage path',
+    }, { status: 422 }) });
+    await assert.rejects(h.api.apiRequest('/api/posts', { method: 'POST', body: {} }), error => {
+      assert.equal(error.code, code);
+      assert.match(error.message, /video/i);
+      assert.match(error.message, /try|retake/i);
+      assert.doesNotMatch(error.message, /private|diagnostics|storage path/);
+      return true;
+    });
+    assert.deepEqual(h.logs, []);
+  }
+});
