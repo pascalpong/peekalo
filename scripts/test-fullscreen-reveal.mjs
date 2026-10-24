@@ -22,7 +22,7 @@ class BrowserWindow extends globalThis.EventTarget {
     super.removeEventListener(type, listener, options);
   }
 }
-function harness(t, { width = 400, height = 800, clientWidth = width, orientation = 'portrait-primary', overflow = 'auto', padding = '7px' } = {}) {
+function harness(t, { width = 400, height = 800, clientWidth = width, orientation = 'portrait-primary', overflow = 'auto', padding = '7px', visible = true } = {}) {
   const window = new BrowserWindow();
   Object.assign(window, { innerWidth: width, innerHeight: height, screen: { orientation: { type: orientation } } });
   const root = { style: { overflow, paddingRight: padding }, clientWidth };
@@ -44,7 +44,7 @@ function harness(t, { width = 400, height = 800, clientWidth = width, orientatio
     window, document, screen: window.screen,
     getComputedStyle: element => ({ paddingRight: element.style.paddingRight }),
   });
-  const portal = exported.FullscreenReveal({ children: 'non-sensitive fixture', seconds: '8.0', onDismiss: () => dismissed++ });
+  const portal = exported.FullscreenReveal({ children: 'non-sensitive fixture', seconds: '8.0', visible, onDismiss: () => dismissed++ });
   for (const effect of effects) { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); }
   const cleanup = () => { for (const stop of cleanups.splice(0)) stop(); };
   t.after(cleanup);
@@ -139,4 +139,14 @@ test('the portal uses the document body and an explicit new pointer dismisses im
   h.portal.child.props.onPointerDown({ preventDefault: () => prevented++ });
   assert.equal(prevented, 2);
   assert.equal(h.dismissed(), 1);
+});
+
+test('a covered renewal gap retains the portal children while suppressing clear output and pointer interception', t => {
+  const hidden = harness(t, { visible: false });
+  assert.equal(hidden.portal.child.props.style.visibility, 'hidden');
+  assert.equal(hidden.portal.child.props.style.pointerEvents, 'none');
+  assert.equal(hidden.portal.child.props.children[0].props.children, 'non-sensitive fixture');
+  const visible = harness(t);
+  assert.equal(visible.portal.child.props.style.visibility, 'visible');
+  assert.equal(visible.portal.child.props.style.pointerEvents, 'auto');
 });

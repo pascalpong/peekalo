@@ -6,12 +6,15 @@ import styles from './fullscreen-reveal.module.css';
 import { BrandLogo } from './brand-logo';
 
 /** Presentation only: the original control keeps focus and pointer capture.
- * Mount only while the caller's local allowance or server lease permits reveal.
+ * Callers may retain authorized media while covered between lease renewals.
+ * visible must be true only while their current allowance permits clear output.
+ * Release/interruption unmounts the portal and removes that media.
  * This deliberately avoids a dialog focus change, which would end the hold.
  */
-export function FullscreenReveal({ children, seconds, onDismiss }: {
+export function FullscreenReveal({ children, seconds, onDismiss, visible = true }: {
   children: ReactNode;
   seconds: string;
+  visible?: boolean;
   onDismiss: () => void;
 }) {
   useLayoutEffect(() => {
@@ -53,7 +56,7 @@ export function FullscreenReveal({ children, seconds, onDismiss }: {
   }, [onDismiss]);
 
   // Only mounted after deliberate client interaction; never evaluated in SSR.
-  return createPortal(<div className={styles.overlay} aria-hidden="true"
+  return createPortal(<div className={styles.overlay} aria-hidden="true" style={{ visibility: visible ? "visible" : "hidden", pointerEvents: visible ? "auto" : "none" }}
     onContextMenu={event => event.preventDefault()}
     onPointerDown={event => { event.preventDefault(); onDismiss(); }}>
     <div className={styles.media}>{children}</div>

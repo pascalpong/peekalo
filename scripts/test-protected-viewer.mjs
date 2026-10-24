@@ -129,6 +129,7 @@ function harness(t, { lease, skew = 0, kind = 'photo' } = {}) {
     if (!mounted) return;
     mounted = false;
     for (const cleanup of cleanups.splice(0)) cleanup();
+    tree = undefined;
   };
   t.after(unmount);
   const surface = () => walk(tree, node => node.type === 'button' && node.props['aria-describedby'] === 'protected-instructions');
@@ -143,7 +144,12 @@ function harness(t, { lease, skew = 0, kind = 'photo' } = {}) {
     blur() { window.dispatchEvent(new globalThis.Event('blur')); },
     hide() { document.visibilityState = 'hidden'; document.dispatchEvent(new globalThis.Event('visibilitychange')); },
     once() { walk(tree, node => node.type === 'button' && node.props.onClick && !node.props['aria-describedby']).props.onClick(); },
-    overlay: () => Boolean(walk(tree, node => node.type === Overlay)),
+    overlay: () => Boolean(walk(tree, node => node.type === Overlay && node.props.visible)),
+    mountedOverlay: () => walk(tree, node => node.type === Overlay),
+    async loaded(decode = async () => {}) { const image = walk(tree, node => node.type === "img"); if (image) await image.props.onLoad({ currentTarget: { decode } }); await flush(); },
+    video: () => walk(tree, node => node.type === "video"),
+    retry() { walk(tree, node => node.type === "button" && node.props.children === "Try again").props.onClick(); },
+    hash(value) { window.location.hash = value; window.dispatchEvent(new globalThis.Event("hashchange")); },
     image: () => walk(tree, node => node.type === 'img'),
     status: () => walk(tree, node => node.props?.role === 'status').props.children,
     remaining: () => Number.parseFloat(walk(tree, node => typeof node.props?.['aria-label'] === 'string' && node.props['aria-label'].endsWith(' seconds remaining')).props.children),
@@ -158,16 +164,17 @@ test('rapid release/rehold waits hidden through renew_later and resumes within t
     return globalThis.Response.json(granted({ remainingMs: 6000, expiresAt: serverEpoch + 4000, media: 'second-lease' }));
   } });
   await h.ready();
-  h.down(); await flush();
+  h.down(); await flush(); await h.loaded();
   assert(h.overlay());
   await h.time.advance(100);
   h.release();
   assert(!h.overlay());
   assert.equal(h.remaining(), 8, 'Release conservatively spends the whole prepaid slice');
-  h.down(); await flush();
+  h.down(); await flush(); await h.loaded();
   assert(!h.overlay(), 'A renewal refusal never exposes stale media');
   assert.doesNotMatch(h.status(), /unavailable|couldn.t load|used up/i, 'Too-early rehold must remain retryable, not become unavailable');
   await h.time.advance(2000);
+  await h.loaded();
   assert(h.overlay(), 'An uninterrupted deliberate rehold eventually receives a fresh permitted slice');
   assert.equal(h.image().props.src, '/api/view/media/second-lease');
   assert(h.snapshots.every(state => state.remainingMs >= 0 && state.remainingMs <= 10_000));
@@ -177,7 +184,7 @@ for (const interruption of ['release', 'blur', 'hide', 'unmount']) {
   test(`${interruption} aborts a pending lease and a late reply cannot reveal media`, async t => {
     const pending = deferred();
     const h = harness(t, { lease: () => pending.promise });
-    await h.ready(); h.down(); await flush();
+    await h.ready(); h.down(); await flush(); await h.loaded();
     const request = h.leaseRequests()[0];
     assert(!request.signal.aborted);
     h[interruption]();
@@ -193,7 +200,7 @@ for (const interruption of ['release', 'blur', 'hide', 'unmount']) {
 test('a late reply from a released hold cannot replace a newer successful hold', async t => {
   const old = deferred();
   const h = harness(t, { lease: (_request, number, { granted }) => number === 1 ? old.promise : globalThis.Response.json(granted({ media: 'new-lease' })) });
-  await h.ready(); h.down(); await flush(); h.release(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded(); h.release(); h.down(); await flush(); await h.loaded();
   assert.equal(h.image().props.src, '/api/view/media/new-lease');
   old.resolve(globalThis.Response.json(h.granted({ media: 'old-lease' })));
   await flush();
@@ -209,7 +216,7 @@ test('a continuous hold receives at most ten seconds through two-second grants a
     activeUntil = Math.max(time.now(), activeUntil) + duration;
     return globalThis.Response.json(granted({ remainingMs: remaining, grantedMs: duration, expiresAt: serverEpoch + activeUntil }));
   } });
-  await h.ready(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded();
   assert(h.overlay());
   await h.time.advance(10_001);
   assert(!h.overlay());
@@ -221,7 +228,7 @@ test('a continuous hold receives at most ten seconds through two-second grants a
 
 test('the accessible one-second action uses the same prepaid allowance without automatic renewal', async t => {
   const h = harness(t);
-  await h.ready(); h.once(); await flush();
+  await h.ready(); h.once(); await flush(); await h.loaded();
   assert(h.overlay());
   await h.time.advance(1001);
   assert(!h.overlay());
@@ -235,7 +242,7 @@ test('invalid or oversized lease values never mount clear media', async t => {
     { remainingMs: -1 }, { remainingMs: 10_001 }, { remainingMs: Number.POSITIVE_INFINITY }, { expiresAt: 'invalid' },
   ]) {
     const h = harness(t, { lease: (_request, _number, { granted }) => globalThis.Response.json(granted(patch)) });
-    await h.ready(); h.down(); await flush();
+    await h.ready(); h.down(); await flush(); await h.loaded();
     assert(!h.overlay());
     assert.equal(h.status(), 'The moment couldn’t load. Check your connection and try again.');
     assert.equal(h.time.count(), 0);
@@ -245,7 +252,7 @@ test('invalid or oversized lease values never mount clear media', async t => {
 
 test('a phone clock ahead of the server fails closed instead of revealing beyond an expired deadline', async t => {
   const h = harness(t, { skew: 60_000 });
-  await h.ready(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded();
   assert(!h.overlay());
   assert.equal(h.remaining(), 8);
   await h.time.advance(10_000);
@@ -254,7 +261,7 @@ test('a phone clock ahead of the server fails closed instead of revealing beyond
 
 test('a phone clock behind the server cannot stretch one grant beyond its conservative two-second window', async t => {
   const h = harness(t, { skew: -60_000, lease: (_request, _number, { granted }) => globalThis.Response.json(granted({ remainingMs: 0 })) });
-  await h.ready(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded();
   assert(h.overlay());
   await h.time.advance(2001);
   assert(!h.overlay());
@@ -265,7 +272,7 @@ test('a phone clock behind the server cannot stretch one grant beyond its conser
 for (const interruption of ['release', 'blur']) {
   test(`${interruption} during a too-early retry wait prevents subsequent lease requests`, async t => {
     const h = harness(t, { lease: () => globalThis.Response.json({ error: 'renew_later' }, { status: 409 }) });
-    await h.ready(); h.down(); await flush();
+    await h.ready(); h.down(); await flush(); await h.loaded();
     h[interruption]();
     const before = h.leaseRequests().length;
     await h.time.advance(5000);
@@ -277,7 +284,7 @@ for (const interruption of ['release', 'blur']) {
 
 test('persistent renew_later replies stop within a bounded wait and leave a recoverable hidden error', async t => {
   const h = harness(t, { lease: () => globalThis.Response.json({ error: 'renew_later' }, { status: 409 }) });
-  await h.ready(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded();
   assert(!h.overlay());
   await h.time.advance(3500);
   assert(!h.overlay());
@@ -294,14 +301,151 @@ test('persistent renew_later replies stop within a bounded wait and leave a reco
 test('expiry hides media while an in-flight renewal finishes without creating parallel lease requests', async t => {
   const pending = deferred();
   const h = harness(t, { lease: (_request, number, { granted }) => number === 1 ? globalThis.Response.json(granted()) : pending.promise });
-  await h.ready(); h.down(); await flush();
+  await h.ready(); h.down(); await flush(); await h.loaded();
   await h.time.advance(2001);
   assert(!h.overlay(), 'Expired local media must be hidden while renewal is pending');
   assert.equal(h.leaseRequests().length, 2, 'Ticker and expiry must share the one pending renewal');
   assert(!h.leaseRequests()[1].signal.aborted);
   pending.resolve(globalThis.Response.json(h.granted({ remainingMs: 6000, expiresAt: serverEpoch + 4000, media: 'renewed-lease' })));
+  await flush(); await h.loaded();
+  assert(h.overlay());
+  assert.equal(h.image().props.src, '/api/view/media/fixture-lease', 'Renewal must preserve the already-loaded media resource');
+  assert.equal(h.leaseRequests().length, 2);
+});
+
+test('a photo is requested only after a deliberate grant and remains covered until decode completes', async t => {
+  const lease = deferred(), decode = deferred();
+  const h = harness(t, { lease: () => lease.promise });
+  await h.ready();
+  assert(!h.image());
+  h.down(); await flush();
+  assert(!h.image(), 'A pending authorization must never request the original');
+  lease.resolve(globalThis.Response.json(h.granted())); await flush();
+  assert(h.image());
+  assert(h.mountedOverlay());
+  assert(!h.overlay(), 'An authorized but still-loading photo must remain covered');
+  const loading = h.loaded(() => decode.promise);
+  await flush();
+  assert(!h.overlay(), 'The load event alone is insufficient while decoding is pending');
+  decode.resolve(); await loading;
+  assert(h.overlay());
+  assert.match(h.status(), /Revealed/);
+});
+
+test('a slow photo keeps its resource across a renewal gap and readiness cannot reveal an expired lease', async t => {
+  const renewal = deferred();
+  const h = harness(t, { lease: (_request, number, { granted }) => number === 1
+    ? globalThis.Response.json(granted()) : renewal.promise });
+  await h.ready(); h.down(); await flush();
+  const original = h.image().props.src;
+  await h.time.advance(2001);
+  assert(h.mountedOverlay(), 'The covered portal must remain mounted to preserve its pending image');
+  assert.equal(h.image().props.src, original);
+  assert(!h.overlay());
+  await h.loaded();
+  assert(!h.overlay(), 'Decode during a renewal gap cannot expose an expired allowance');
+  assert.equal(h.leaseRequests().length, 2);
+  renewal.resolve(globalThis.Response.json(h.granted({ remainingMs: 6000, expiresAt: serverEpoch + 4000, media: 'renewal-resource' })));
   await flush();
   assert(h.overlay());
-  assert.equal(h.image().props.src, '/api/view/media/renewed-lease');
-  assert.equal(h.leaseRequests().length, 2);
+  assert.equal(h.image().props.src, original, 'A newly permitted slice must reuse the same resource');
+});
+
+test('an indefinitely loading photo stops after two prepaid slices and explicit retry can recover', async t => {
+  const h = harness(t, { lease: (_request, number, { granted }) => globalThis.Response.json(granted({
+    remainingMs: 10_000 - number * 2000,
+    expiresAt: serverEpoch + number * 2000,
+    media: `fixture-${number}`,
+  })) });
+  await h.ready(); h.down(); await flush();
+  const stale = h.image();
+  await h.time.advance(4001);
+  assert.equal(h.leaseRequests().length, 2, 'Loading cannot automatically charge all five grants');
+  assert.equal(h.remaining(), 6, 'Both prepaid loading slices remain charged; no refund is invented');
+  assert.match(h.status(), /couldn.t load/);
+  assert(!h.image());
+  assert(!h.mountedOverlay());
+  assert.equal(h.time.count(), 0);
+  h.down(); await flush();
+  assert.equal(h.leaseRequests().length, 2, 'The effect must remain in error until explicit retry');
+  h.retry(); await flush(); h.down(); await flush(); await h.loaded();
+  assert(h.overlay());
+  stale.props.onError();
+  await stale.props.onLoad({ currentTarget: { decode: async () => {} } });
+  assert(h.overlay(), 'Events from the abandoned resource cannot damage the retried hold');
+  assert.equal(h.leaseRequests().length, 3);
+});
+
+for (const interruption of ['release', 'blur', 'hide', 'unmount', 'hash']) {
+  test(`a pending image decode after ${interruption} cannot revive clear output`, async t => {
+    const decode = deferred();
+    const h = harness(t);
+    await h.ready(); h.down(); await flush();
+    const stale = h.image();
+    const loading = h.loaded(() => decode.promise);
+    if (interruption === 'hash') h.hash('#another-non-sensitive-fixture');
+    else h[interruption]();
+    decode.resolve(); await loading;
+    stale.props.onError(); await flush();
+    assert(!h.overlay());
+    assert(!h.image());
+    await h.time.advance(5000);
+    assert.equal(h.leaseRequests().length, 1);
+  });
+}
+
+test('late decode success and error from a released photo cannot replace a newer successful hold', async t => {
+  const decode = deferred();
+  const h = harness(t);
+  await h.ready(); h.down(); await flush();
+  const stale = h.image();
+  const loading = h.loaded(() => decode.promise);
+  h.release(); h.down(); await flush(); await h.loaded();
+  assert(h.overlay());
+  decode.resolve(); await loading;
+  stale.props.onError();
+  assert(h.overlay());
+  assert.match(h.status(), /Revealed/);
+});
+
+test('a failed image decode produces a recoverable error without more automatic grants', async t => {
+  const h = harness(t);
+  await h.ready(); h.down(); await flush();
+  await h.loaded(async () => { throw new Error('synthetic fixture decode failure'); });
+  assert.match(h.status(), /couldn.t load/);
+  assert(!h.mountedOverlay());
+  await h.time.advance(10_000);
+  assert.equal(h.leaseRequests().length, 1);
+});
+
+test('video never autoplays while loading or between leases and only readiness permits explicit playback', async t => {
+  const renewal = deferred();
+  const h = harness(t, { kind: 'video', lease: (_request, number, { granted }) => number === 1
+    ? globalThis.Response.json(granted()) : renewal.promise });
+  let plays = 0, pauses = 0;
+  const player = { currentTime: 0, play: async () => { plays++; }, pause: () => { pauses++; }, removeAttribute() {}, load() {} };
+  await h.ready(); h.down(); await flush();
+  let element = h.video();
+  element.props.ref.current = player;
+  assert.equal(element.props.autoPlay, false);
+  assert.equal(plays, 0);
+  element.props.onLoadedMetadata({ currentTarget: player });
+  assert.equal(plays, 0, 'Metadata is not a usable video frame');
+  await h.time.advance(2001);
+  element.props.onLoadedData();
+  assert(!h.overlay());
+  assert.equal(plays, 0, 'A loaded frame cannot start audio while the lease is expired');
+  assert(pauses > 0);
+  renewal.resolve(globalThis.Response.json(h.granted({ remainingMs: 6000, expiresAt: serverEpoch + 4000 })));
+  await flush();
+  assert(h.overlay());
+  assert.equal(plays, 1);
+  element = h.video();
+  assert.equal(element.props.autoPlay, false, 'Playback remains under the lifecycle gate even after readiness');
+  h.release();
+  assert(!h.video());
+  const stopped = pauses;
+  element.props.onLoadedData(); element.props.onError(); await flush();
+  assert.equal(plays, 1);
+  assert.equal(pauses, stopped);
 });

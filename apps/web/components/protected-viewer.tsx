@@ -6,10 +6,10 @@ import { Icon } from "./icons";
 import styles from "./protected-viewer.module.css";
 
 type Phase = "loading" | "ready" | "requesting" | "revealing" | "hidden" | "exhausted" | "unavailable" | "busy" | "error";
-type ViewerState = { phase: Phase; kind: "photo" | "video"; remainingMs: number; mediaUrl: string | null };
+type ViewerState = { phase: Phase; kind: "photo" | "video"; remainingMs: number; mediaUrl: string | null; mediaTurn: number | null; mediaReady: boolean };
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string | number };
-type Controls = { start: (input: string, oneSecond?: boolean) => void; stop: () => void; retry: () => void };
-const initial: ViewerState = { phase: "loading", kind: "photo", remainingMs: 10_000, mediaUrl: null };
+type Controls = { start: (input: string, oneSecond?: boolean) => void; stop: () => void; retry: () => void; ready: (turn: number) => void; failed: (turn: number) => void };
+const initial: ViewerState = { phase: "loading", kind: "photo", remainingMs: 10_000, mediaUrl: null, mediaTurn: null, mediaReady: false };
 
 function statusMessage(phase: Phase) {
   switch (phase) {
@@ -39,6 +39,7 @@ export function ProtectedViewer() {
     const sessionId = crypto.randomUUID();
     let holding = false;
     let once = false;
+    let loadingGrants = 0;
     let deadline = 0;
     let renewalWaitStarted: number | null = null;
     let unreserved = 10_000;
@@ -75,7 +76,7 @@ export function ProtectedViewer() {
       }
       // Unspent prepaid time is not refunded after release/interruption.
       const stoppedPhase = phase ?? (unreserved <= 0 ? "exhausted" : "hidden");
-      publish({ phase: stoppedPhase, mediaUrl: null, remainingMs: phase === "exhausted" ? 0 : Math.min(remainingMs, unreserved) });
+      publish({ phase: stoppedPhase, mediaUrl: null, mediaTurn: null, mediaReady: false, remainingMs: phase === "exhausted" ? 0 : Math.min(remainingMs, unreserved) });
       deadline = 0;
     };
     const post = (url: string, body: object, signal: AbortSignal) => fetch(url, {
@@ -107,6 +108,9 @@ export function ProtectedViewer() {
     const requestLease = async (turn: number) => {
       if (!holding || !mounted || generation !== turn || controller) return;
       clearTimeout(renewal);
+      // Loading must not silently spend the entire allowance. Two prepaid
+      // slices are the maximum until this hold has decoded usable media.
+      if (!current.mediaReady && loadingGrants >= 2) return;
       const sentAt = performance.now();
       const previousDeadline = deadline;
       const pending = new AbortController();
@@ -138,14 +142,17 @@ export function ProtectedViewer() {
           stop("error"); return;
         }
         unreserved = result.remainingMs;
+        if (!current.mediaReady) loadingGrants++;
         renewalWaitStarted = null;
         const now = performance.now();
         const conservativeDeadline = Math.max(sentAt, previousDeadline) + result.grantedMs;
         deadline = Math.min(conservativeDeadline, now + Math.max(0, serverExpires - Date.now()));
         if (deadline <= now) { stop(); return; }
-        publish({ phase: "revealing", mediaUrl: current.mediaUrl ?? mediaPath, remainingMs: unreserved + deadline - now });
+        publish({ phase: current.mediaReady ? "revealing" : "requesting", mediaUrl: current.mediaUrl ?? mediaPath, mediaTurn: turn, remainingMs: unreserved + deadline - now });
+        if (current.mediaReady && video.current) void video.current.play().catch(() => { if (holding && generation === turn && deadline > performance.now() && current.phase === "revealing") stop("error"); });
         clearTimers();
         const expire = () => {
+          if (!current.mediaReady && loadingGrants >= 2) { stop("error"); return; }
           if (once || unreserved <= 0) { stop(); return; }
           // Hide immediately at expiry, but keep the deliberate hold while a slow renewal finishes.
           if (video.current) {
@@ -153,7 +160,9 @@ export function ProtectedViewer() {
             video.current.pause();
           }
           clearInterval(ticker);
-          publish({ phase: "requesting", mediaUrl: null, remainingMs: unreserved });
+          // Keep the authorized fetch/element stable across renewal gaps;
+          // presentation is covered until a current lease permits output.
+          publish({ phase: "requesting", remainingMs: unreserved });
           if (!controller && holding) void requestLease(turn);
         };
         ticker = setInterval(() => {
@@ -162,7 +171,7 @@ export function ProtectedViewer() {
           publish({ remainingMs: unreserved + left });
         }, 50);
         expiry = setTimeout(expire, Math.max(0, Math.min(once ? 1000 : Infinity, deadline - performance.now())));
-        if (!once && unreserved > 0) {
+        if (!once && unreserved > 0 && (current.mediaReady || loadingGrants < 2)) {
           renewal = setTimeout(() => { void requestLease(turn); }, Math.max(0, deadline - performance.now() - 600));
         }
       } catch {
@@ -177,11 +186,24 @@ export function ProtectedViewer() {
         input.current = source;
         holding = true;
         once = oneSecond;
+        loadingGrants = 0;
         publish({ phase: "requesting" });
         void requestLease(turn);
       },
       stop: () => { if (holding) stop(); },
       retry: () => { void load(); },
+      ready: turn => {
+        if (!mounted || !holding || generation !== turn || current.mediaTurn !== turn || current.mediaReady) return;
+        publish({ mediaReady: true, phase: deadline > performance.now() ? "revealing" : "requesting" });
+        if (deadline > performance.now() && video.current) void video.current.play().catch(() => { if (holding && generation === turn && deadline > performance.now() && current.phase === "revealing") stop("error"); });
+        // The second loading slice deliberately had no renewal scheduled.
+        // Readiness can now resume ordinary renewal without changing its expiry.
+        if (!once && unreserved > 0) {
+          clearTimeout(renewal);
+          renewal = setTimeout(() => { void requestLease(turn); }, Math.max(0, deadline - performance.now() - 600));
+        }
+      },
+      failed: turn => { if (mounted && holding && generation === turn && current.mediaTurn === turn) stop("error"); },
     };
     const suspend = () => { if (holding) stop(); };
     const visibility = () => { if (document.visibilityState !== "visible") suspend(); };
@@ -206,7 +228,7 @@ export function ProtectedViewer() {
     };
   }, []);
 
-  const revealed = state.phase === "revealing" && state.mediaUrl !== null;
+  const revealed = state.phase === "revealing" && state.mediaReady && state.mediaUrl !== null;
   const disabled = ["loading", "exhausted", "unavailable", "error"].includes(state.phase);
   const seconds = (Math.ceil(state.remainingMs / 100) / 10).toFixed(1);
   const stop = useCallback(() => { controls.current?.stop(); }, []);
@@ -236,12 +258,17 @@ export function ProtectedViewer() {
       }}>
       <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || state.phase === "unavailable" ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : state.phase === "unavailable" ? "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
     </button>
-    {revealed && <FullscreenReveal seconds={seconds} onDismiss={stop}>
+    {state.mediaUrl !== null && <FullscreenReveal seconds={seconds} onDismiss={stop} visible={revealed}>
       {state.kind === "photo" && (
         // eslint-disable-next-line @next/next/no-img-element -- Private media uses the cookie-authorized gateway only during an active lease; never Next image caching.
-        <img src={state.mediaUrl!} alt="Shared photo" className={styles.media} draggable={false} referrerPolicy="no-referrer" onError={() => { stop(); setState(previous => ({ ...previous, phase: "error", mediaUrl: null })); }} />
+        <img src={state.mediaUrl!} alt="Shared photo" className={styles.media} draggable={false} referrerPolicy="no-referrer" onLoad={async event => {
+          const image = event.currentTarget;
+          const turn = state.mediaTurn!;
+          try { await image.decode(); controls.current?.ready(turn); }
+          catch { controls.current?.failed(turn); }
+        }} onError={() => controls.current?.failed(state.mediaTurn!)} />
       )}
-      {state.kind === "video" && <video ref={video} src={state.mediaUrl!} className={styles.media} autoPlay playsInline preload="none" controls={false} onLoadedMetadata={event => { event.currentTarget.currentTime = videoPosition.current; }} onTimeUpdate={event => { videoPosition.current = event.currentTarget.currentTime; }} disablePictureInPicture controlsList="nodownload noplaybackrate noremoteplayback" onError={() => { stop(); setState(previous => ({ ...previous, phase: "error", mediaUrl: null })); }} />}
+      {state.kind === "video" && <video ref={video} src={state.mediaUrl!} className={styles.media} autoPlay={false} playsInline preload="auto" controls={false} onLoadedMetadata={event => { if (video.current === event.currentTarget) event.currentTarget.currentTime = videoPosition.current; }} onLoadedData={() => controls.current?.ready(state.mediaTurn!)} onTimeUpdate={event => { if (video.current === event.currentTarget) videoPosition.current = event.currentTarget.currentTime; }} disablePictureInPicture controlsList="nodownload noplaybackrate noremoteplayback" onError={() => controls.current?.failed(state.mediaTurn!)} />}
     </FullscreenReveal>}
     <p className={styles.status} role="status" aria-live="polite">{statusMessage(state.phase)}</p>
     <p id="protected-instructions" className={styles.help}>Hold the image, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
