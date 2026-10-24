@@ -100,6 +100,14 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
+### HOST-06: hosted native account-to-account sharing — 24 October (setup; device delivery pending)
+
+- The phone is authorized and unlocked. Hosted Metro was restarted on port 8084. The original app already has a hosted `@testuser01` session; both existing app sessions are preserved. Native Supabase session keys are scoped by project, and no login storage was cleared.
+- Prepared a third isolated Android package, **Peekalo Receiver** (`com.peekalo.hostedreceiver`), from the same application source. Debug arm64 build passes in 29 seconds; package identity was verified before installation. Mobile lint and TypeScript pass. This is a development build, not release evidence.
+- Created one disposable, admin-confirmed `.invalid` hosted test account/profile, with credentials retained only in ignored private files. No signup email was sent. The intended flow uses this isolated account to capture/send to the existing hosted account, preserving its login and existing media quota. This does not verify public email signup.
+- Added ignored, scoped evidence tooling for that disposable account's posts, recipient grant state, private-storage sizes, recipient budget and external-link count. Baseline has no posts. No private original, token or credential is printed or read for evidence.
+- Installation did not complete within the ADB timeout, and Android brought Google Play to the foreground. The main Android profile has not yet reported the new package installed. The user has been asked to finish any Play verification/scan prompt; no protection setting was disabled. Sign-in, fresh camera capture, owner-created grant, Inbox acceptance and native reveal are still pending. This is not hosted native delivery verification or a two-physical-device test.
+
 ### HOST-05: hosted native video — 24 October (Samsung hosted link playback verified)
 
 - The user recorded a short ordinary-object clip in Peekalo Test and reached Share your video under the hosted account. Link creation reserved a video post, but processing failed before private publication or link creation; no viewing-budget entry was created. The native screen showed the generic failure. The captured draft remains the retry target; this is not a playback result.
