@@ -100,13 +100,13 @@ See [DECISIONS.md](DECISIONS.md). Use the explicitly provisional three-active-it
 
 ## Latest verification
 
-### HOST-06: hosted native account-to-account sharing — 24 October (setup; device delivery pending)
+### HOST-06: hosted native account-to-account sharing — 24 October (isolated account signed in; capture/delivery pending)
 
 - The phone is authorized and unlocked. Hosted Metro was restarted on port 8084. The original app already has a hosted `@testuser01` session; both existing app sessions are preserved. Native Supabase session keys are scoped by project, and no login storage was cleared.
 - Prepared a third isolated Android package, **Peekalo Receiver** (`com.peekalo.hostedreceiver`), from the same application source. Debug arm64 build passes in 29 seconds; package identity was verified before installation. Mobile lint and TypeScript pass. This is a development build, not release evidence.
 - Created one disposable, admin-confirmed `.invalid` hosted test account/profile, with credentials retained only in ignored private files. No signup email was sent. The intended flow uses this isolated account to capture/send to the existing hosted account, preserving its login and existing media quota. This does not verify public email signup.
 - Added ignored, scoped evidence tooling for that disposable account's posts, recipient grant state, private-storage sizes, recipient budget and external-link count. Baseline has no posts. No private original, token or credential is printed or read for evidence.
-- Installation did not complete within the ADB timeout, and Android brought Google Play to the foreground. The main Android profile has not yet reported the new package installed. The user has been asked to finish any Play verification/scan prompt; no protection setting was disabled. Sign-in, fresh camera capture, owner-created grant, Inbox acceptance and native reveal are still pending. This is not hosted native delivery verification or a two-physical-device test.
+- The first installation exceeded the ADB timeout with Google Play in the foreground. After the user confirmed scan/installation completion, the new package was verified installed in Android user 0 and opened against hosted Metro. Native email/password sign-in reached “You’re ready” with the disposable profile. The camera permission prompt was resolved and the in-app shutter is enabled; the user has been asked to take an ordinary-object photo and leave the sharing screen open. No protection setting was disabled. Fresh camera capture, owner-created grant, Inbox acceptance and native reveal are still pending. This is not hosted native delivery verification or a two-physical-device test.
 
 ### HOST-05: hosted native video — 24 October (Samsung hosted link playback verified)
 
