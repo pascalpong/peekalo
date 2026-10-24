@@ -45,9 +45,10 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 const text = value => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
-function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo' } = {}) {
+function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true } = {}) {
   const players = [], playbackEvents = [];
   let videoChild = null;
+  let loadedImageSource = null;
   const time = fakeClock(), calls = [], subscribers = new Set(), appListeners = new Map(), hooks = [];
   let session = signedIn ? { user: { id: 'account-a' }, access_token: 'fixture-token-a' } : null;
   let cursor = 0, tree, component, mounted = true, focused = true, renderPending = false;
@@ -68,6 +69,13 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
   const render = () => {
     cursor = 0; tree = component({ postId, kind });
     renderVideo();
+    const image = find(tree, node => node.type === 'Image');
+    const imageKey = image ? JSON.stringify(image.props.source) : null;
+    if (!image) loadedImageSource = null;
+    if (image && imageReady && imageKey !== loadedImageSource) {
+      loadedImageSource = imageKey;
+      globalThis.queueMicrotask(() => image.props.onLoad?.());
+    }
     for (const [index, fn] of pendingEffects) {
       const hook = hooks[index];
       hook.cleanup?.(); hook.cleanup = undefined;
@@ -102,7 +110,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     const listeners = new Map();
     const event = name => playbackEvents.push({ name, at: time.now(), player: players.length });
     const player = {
-      source, throwPositionRead: false,
+      source, status: videoStatus, throwPositionRead: false,
       get currentTime() { if (released || player.throwPositionRead) throw new Error('Position unavailable'); return currentTime; },
       set currentTime(value) { if (released) throw new Error('Released player'); currentTime = value; },
       get released() { return released; }, get playing() { return playing; },
@@ -113,7 +121,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
         const list = listeners.get(name) ?? new Set(); list.add(callback); listeners.set(name, list);
         return { remove: () => list.delete(callback) };
       },
-      emit(name, payload) { for (const callback of listeners.get(name) ?? []) callback(payload); },
+      emit(name, payload) { if (name === 'statusChange') player.status = payload.status; for (const callback of [...listeners.get(name) ?? []]) callback(payload); },
     };
     setup?.(player); players.push(player); event('create');
     return player;
@@ -205,7 +213,20 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     background() { AppState.currentState = 'background'; for (const callback of appListeners.get('change') ?? []) callback('background'); },
     account(id) { session = id ? { user: { id }, access_token: `fixture-token-${id === 'account-a' ? 'a' : 'b'}` } : null; for (const callback of subscribers) callback(session ? 'SIGNED_IN' : 'SIGNED_OUT', session); },
     image: () => find(tree, node => node.type === 'Image'),
+    imageVisible: () => {
+      const visible = (node, hidden = false) => {
+        if (!node || typeof node !== 'object') return false;
+        if (Array.isArray(node)) return node.some(child => visible(child, hidden));
+        const styles = [node.props?.style].flat(Infinity).filter(Boolean);
+        hidden ||= styles.some(style => style.opacity === 0 || style.display === 'none');
+        if (node.type === 'Image') return !hidden;
+        return visible(node.props?.children, hidden);
+      };
+      return visible(tree);
+    },
     video: () => videoChild?.tree,
+    videoProps: () => find(tree, node => typeof node.type === 'function' && node.type.name === 'ReceivedVideo')?.props,
+    rawImage: () => find(tree, node => node.type === 'Image'),
     remaining: () => Number.parseFloat(text(find(tree, node => node.type === 'Text' && text(node.props.children).endsWith('s left')).props.children)),
     message: () => find(tree, node => node.props?.accessibilityLiveRegion === 'polite').props.children,
   };
@@ -360,7 +381,7 @@ test('native expiry covers media during a pending renewal and starts no parallel
   const h = harness(t, { request: (_entry, number, { grant }) => number === 1 ? grant() : pending.promise });
   await h.ready(); h.press(); await flush();
   await h.time.advance(2001);
-  assert(!h.image()); assert.equal(h.calls.length, 2);
+  assert(!h.imageVisible()); assert.equal(h.calls.length, 2);
   pending.resolve(h.grant({ remainingMs: 6000, expiresAt: new Date(epoch + 4000).toISOString() })); await flush();
   assert(h.image()); assert.equal(h.calls.length, 2);
   h.release(); await flush();
@@ -493,12 +514,13 @@ test('video expiry pauses audio while renewal is pending and a later grant resum
   await h.ready(); h.press(); await flush();
   h.players[0].currentTime = 0.987;
   await h.time.advance(2001);
-  assert(!h.video()); assert(!h.players[0].playing);
+  assert(h.video(), 'Keep the loading player mounted across a lease gap'); assert(!h.players[0].playing);
+  assert.equal(h.videoProps().reveal, null);
   const pause = h.playbackEvents.find(event => event.name === 'pause');
   assert(pause && pause.at <= 2000, 'Audio must stop at the active monotonic deadline');
   pending.resolve(h.grant({ remainingMs: 6000, expiresAt: new Date(epoch + 4000).toISOString() })); await flush();
-  assert(h.video()); assert.equal(h.players[1].currentTime, 0.987);
-  assert(h.players[1].playing);
+  assert(h.video()); assert.equal(h.players.length, 1); assert.equal(h.players[0].currentTime, 0.987);
+  assert(h.players[0].playing);
 });
 
 test('video account changes clear the previous account playback position after synchronous pause', async t => {
@@ -512,3 +534,95 @@ test('video account changes clear the previous account playback position after s
   assert.equal(h.players[1].currentTime, 0);
   assert.equal(h.players[1].source.headers.Authorization, 'Bearer fixture-token-b');
 });
+
+test('a slow video keeps one source across a lease gap and readiness cannot play without an active lease', async t => {
+  const pending = deferred();
+  const h = harness(t, { kind: 'video', videoStatus: 'loading', request: (_entry, number, { grant }) => number === 1 ? grant() : pending.promise });
+  await h.ready(); h.press(); await flush();
+  const player = h.players[0], source = player.source;
+  assert(!player.playing, 'Downloading media must not start audio');
+  await h.time.advance(2001);
+  assert.equal(h.players.length, 1); assert(!player.released);
+  assert.equal(h.videoProps().reveal, null);
+  player.emit('statusChange', { status: 'readyToPlay' }); await flush();
+  assert(!player.playing, 'Readiness during a renewal gap cannot resume playback');
+  pending.resolve(h.grant({ remainingMs: 6000, expiresAt: new Date(epoch + 4000).toISOString() })); await flush();
+  assert.equal(h.players.length, 1); assert.equal(player.source, source);
+  assert(player.playing, 'The same ready player resumes only after a valid grant');
+  h.release(); assert(!player.playing); await flush(); assert(player.released);
+});
+
+for (const kind of ['photo', 'video']) {
+  test(`a stalled ${kind} loader stops after two prepaid slices and preserves six seconds for an explicit retry`, async t => {
+    let remaining = 10_000, until = 0;
+    const h = harness(t, { kind, videoStatus: 'loading', imageReady: false, request: (_entry, _number, { grant, time }) => {
+      remaining -= 2000; until = Math.max(until, time.now()) + 2000;
+      return grant({ remainingMs: remaining, expiresAt: new Date(epoch + until).toISOString() });
+    } });
+    await h.ready(); h.press(); await flush();
+    assert(!h.imageVisible());
+    await h.time.advance(10_000);
+    assert.equal(h.calls.length, 2, 'Loading cannot silently spend the entire viewing allowance');
+    assert.equal(h.remaining(), 6, 'Spent loading slices are not refunded');
+    assert(!h.rawImage()); assert(!h.video()); assert.equal(h.time.count(), 0);
+    assert.match(h.message(), /load|try again/i);
+    if (kind === 'video') { assert.equal(h.players.length, 1); assert(!h.players[0].playing); }
+  });
+}
+
+for (const interruption of ['release', 'account']) {
+  test(`late video ready/error callbacks after ${interruption} cannot affect a new hold`, async t => {
+    const h = harness(t, { kind: 'video', videoStatus: 'loading' });
+    await h.ready(); h.press(); await flush();
+    const old = h.videoProps();
+    if (interruption === 'account') h.account('account-b'); else h.release();
+    await flush(); h.press(); await flush();
+    const current = h.players.at(-1);
+    old.onReady(true); old.onError(); await flush();
+    assert(h.video(), 'An obsolete load error must not terminate the new hold');
+    assert(!current.playing, 'An obsolete ready callback must not reveal or start the new source');
+    current.emit('statusChange', { status: 'readyToPlay' }); await flush();
+    assert(current.playing);
+  });
+}
+
+test('a stale photo load cannot reveal the next account image or stop its current hold', async t => {
+  const h = harness(t, { imageReady: false });
+  await h.ready(); h.press(); await flush();
+  const old = h.rawImage().props;
+  h.account('account-b'); await flush(); h.press(); await flush();
+  old.onLoad(); old.onError(); await flush();
+  assert(h.rawImage()); assert(!h.imageVisible());
+  h.rawImage().props.onLoad(); await flush();
+  assert(h.imageVisible());
+  assert.equal(h.rawImage().props.source.headers.Authorization, 'Bearer fixture-token-b');
+});
+
+test('video readiness loss pauses immediately and readiness recovery requires a live lease', async t => {
+  const h = harness(t, { kind: 'video' });
+  await h.ready(); h.press(); await flush();
+  const player = h.players[0];
+  assert(player.playing);
+  player.emit('statusChange', { status: 'loading' });
+  assert(!player.playing, 'Buffering must pause synchronously');
+  await flush();
+  player.emit('statusChange', { status: 'readyToPlay' }); await flush();
+  assert(player.playing);
+  h.release();
+  player.emit('statusChange', { status: 'readyToPlay' });
+  assert(!player.playing, 'A queued native ready event after release cannot restart audio before React cleanup');
+  await flush(); assert(!h.video());
+});
+
+for (const interruption of ['blur', 'unfocus', 'account']) {
+  test(`a queued ready event after ${interruption} cannot restart video audio before cleanup`, async t => {
+    const h = harness(t, { kind: 'video' });
+    await h.ready(); h.press(); await flush();
+    const player = h.players[0];
+    if (interruption === 'account') h.account(null); else h[interruption]();
+    assert(!player.playing);
+    player.emit('statusChange', { status: 'readyToPlay' });
+    assert(!player.playing);
+    await flush(); assert(!h.video());
+  });
+}

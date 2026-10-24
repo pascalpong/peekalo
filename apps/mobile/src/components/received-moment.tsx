@@ -9,6 +9,7 @@ import { colors, tokens } from './ui';
 
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string };
 type Reveal = { uri: string; authorization: string; deadline: number; remainingMs: number };
+type MediaSource = Reveal & { turn: number };
 
 // Expo's iOS app-switcher setting is global. Finish an old focus's native
 // cleanup before a new focus can enable protection and permit media.
@@ -19,8 +20,8 @@ function serializeProtection(operation: () => Promise<void>) {
   return pending;
 }
 
-function ReceivedVideo({ reveal, onError, position, pausePlayback }: { reveal: Reveal; onError: () => void; position: { current: number }; pausePlayback: { current: (() => void) | null } }) {
-  const player = useVideoPlayer({ uri: reveal.uri, headers: { Authorization: reveal.authorization }, useCaching: false }, p => {
+function ReceivedVideo({ source, reveal, canPlay, onReady, onError, position, pausePlayback }: { source: MediaSource; reveal: Reveal | null; canPlay: () => boolean; onReady: (ready: boolean) => void; onError: () => void; position: { current: number }; pausePlayback: { current: (() => void) | null } }) {
+  const player = useVideoPlayer({ uri: source.uri, headers: { Authorization: source.authorization }, useCaching: false }, p => {
     p.allowsExternalPlayback = false;
     p.loop = false;
     p.currentTime = position.current;
@@ -32,7 +33,15 @@ function ReceivedVideo({ reveal, onError, position, pausePlayback }: { reveal: R
     try { player.pause(); } catch { /* Already released or interrupted. */ }
   }, [player, position]);
   useLayoutEffect(() => {
-    const subscription = player.addListener('statusChange', e => { if (e.status === 'error') onError(); });
+    const status = () => {
+      if (player.status === 'error') { pause(); onError(); return; }
+      const ready = player.status === 'readyToPlay';
+      onReady(ready);
+      if (ready && reveal && canPlay()) player.play();
+      else pause();
+    };
+    const subscription = player.addListener('statusChange', status);
+    status();
     const time = player.addListener('timeUpdate', e => { if (Number.isFinite(e.currentTime) && e.currentTime >= 0) position.current = e.currentTime; });
     return () => {
       // Layout cleanup runs before useVideoPlayer's passive auto-release. The
@@ -41,13 +50,14 @@ function ReceivedVideo({ reveal, onError, position, pausePlayback }: { reveal: R
       else { try { player.pause(); } catch { /* Already stopped/released. */ } }
       subscription.remove(); time.remove();
     };
-  }, [onError, pause, pausePlayback, player, position]);
+  }, [canPlay, onError, onReady, pause, pausePlayback, player, position, reveal]);
   useLayoutEffect(() => {
     // A fresh grant may arrive in the same commit as local expiry. Resume the
     // existing player only after that grant has restored the callback.
     pausePlayback.current = pause;
-    player.play();
-  }, [pause, pausePlayback, player, reveal]);
+    if (reveal && canPlay() && player.status === 'readyToPlay') player.play();
+    else pause();
+  }, [canPlay, pause, pausePlayback, player, reveal]);
   return <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls={false} contentFit="contain"
     surfaceType="textureView" allowsPictureInPicture={false} fullscreenOptions={{ enable: false }} />;
 }
@@ -55,6 +65,11 @@ function ReceivedVideo({ reveal, onError, position, pausePlayback }: { reveal: R
 export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo' | 'video' }) {
   const [protectedScreen, setProtectedScreen] = useState(false);
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  // One transport per deliberate hold: lease gaps cover/pause it without
+  // restarting native buffering. Release/auth/navigation still discard it.
+  const [mediaSource, setMediaSource] = useState<MediaSource | null>(null);
+  const [mediaReady, setMediaReady] = useState(false);
+  const ready = useRef(false);
   const [remaining, setRemaining] = useState(10_000);
   const [message, setMessage] = useState('Hold to reveal. Release to hide.');
   const [busy, setBusy] = useState(false);
@@ -93,6 +108,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     if (mounted.current) {
       if (lease) setRemaining(lease.remainingMs);
       setReveal(null);
+      setMediaSource(null);
+      ready.current = false;
+      setMediaReady(false);
       setBusy(false);
       setMessage(lease?.remainingMs === 0 ? 'Your viewing time is used up.' : 'Hold to reveal. Release to hide.');
     }
@@ -175,6 +193,11 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     abort.current = controller;
     const valid = () => mounted.current && held.current && epoch.current === current && identity.current === viewer && !controller.signal.aborted && AppState.currentState === 'active';
     let pending = false;
+    let source: MediaSource | null = null;
+    // Bound loading failures to four prepaid seconds; never refund server time.
+    let loadingSlices = 0;
+    ready.current = false;
+    setMediaReady(false);
     let renewalWaitStarted: number | null = null;
     try {
       const client = await getSharingClient(controller.signal);
@@ -184,6 +207,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       const authorization = `Bearer ${data.session.access_token}`;
       const tick = async () => {
         if (!valid() || pending) return;
+        if (!ready.current && loadingSlices >= 2) return;
         if (timer.current) clearTimeout(timer.current);
         timer.current = null;
         pending = true;
@@ -203,22 +227,25 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
           const now = performance.now();
           const deadline = Math.min(Math.max(sentAt, previous?.deadline ?? 0) + response.grantedMs, now + Math.max(0, serverExpires - Date.now()));
           const lease: Reveal = {
-            uri: previous && previous.deadline > now ? previous.uri : mediaUrl.toString(),
+            uri: source?.uri ?? mediaUrl.toString(),
             authorization, deadline, remainingMs: response.remainingMs,
           };
           activeLease.current = lease;
           renewalWaitStarted = null;
           setRemaining(Math.min(10_000, lease.remainingMs + Math.max(0, deadline - now)));
           if (deadline <= now) { stop(); return; }
-          setBusy(false);
+          if (!source) { source = { ...lease, turn: current }; setMediaSource(source); }
+          if (!ready.current) loadingSlices++;
+          setBusy(!ready.current);
           setReveal(lease);
-          setMessage('Revealed · release to hide');
+          setMessage(ready.current ? 'Revealed · release to hide' : 'Loading your moment…');
           if (expiry.current) clearTimeout(expiry.current);
           expiry.current = setTimeout(() => {
             if (!valid()) return;
             pauseVideo();
             setReveal(null);
             setRemaining(lease.remainingMs);
+            if (!ready.current && loadingSlices >= 2) { stop(); setMessage('The moment couldn’t load. Hold to try again.'); return; }
             if (duration !== undefined || lease.remainingMs === 0) { stop(); return; }
             setBusy(true);
             setMessage('Opening your next glimpse…');
@@ -260,7 +287,20 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     return () => clearInterval(ticker);
   }, [pauseVideo, reveal]);
 
-  const mediaFailed = useCallback(() => { stop(); setMessage('The moment couldn’t load. Hold to try again.'); }, [stop]);
+  const canPlay = useCallback(() => Boolean(mediaSource && mediaSource.turn === epoch.current && held.current && ready.current &&
+    AppState.currentState === 'active' && activeLease.current && activeLease.current.deadline > performance.now()), [mediaSource]);
+  const mediaReadyChanged = useCallback((value: boolean) => {
+    if (!mediaSource || mediaSource.turn !== epoch.current || !held.current || AppState.currentState !== 'active') return;
+    ready.current = value;
+    setMediaReady(value);
+    const visible = value && activeLease.current && activeLease.current.deadline > performance.now();
+    if (visible) { setBusy(false); setMessage('Revealed · release to hide'); }
+    else { pauseVideo(); setBusy(true); setMessage('Loading your moment…'); }
+  }, [mediaSource, pauseVideo]);
+  const mediaFailed = useCallback(() => {
+    if (!mediaSource || mediaSource.turn !== epoch.current || !held.current) return;
+    stop(); setMessage('The moment couldn’t load. Hold to try again.');
+  }, [mediaSource, stop]);
   return <View style={styles.section}>
     <Text style={styles.budget}>{(Math.ceil(remaining / 100) / 10).toFixed(1)}s left</Text>
     <View style={styles.card} accessible accessibilityRole="button" accessibilityLabel="Hold to reveal this moment"
@@ -275,9 +315,12 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
         if (touches.length !== 1 || x < 0 || y < 0 || x > bounds.current.width || y > bounds.current.height) stop();
       }}>
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        {reveal ? kind === 'photo' ? <Image source={{ uri: reveal.uri, headers: { Authorization: reveal.authorization }, cache: 'reload' }}
-          style={StyleSheet.absoluteFill} resizeMode="contain" onError={mediaFailed} /> : <ReceivedVideo reveal={reveal} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />
-          : <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View>}
+        {mediaSource ? <View style={[StyleSheet.absoluteFill, { opacity: reveal && mediaReady ? 1 : 0 }]}>
+          {kind === 'photo' ? <Image source={{ uri: mediaSource.uri, headers: { Authorization: mediaSource.authorization }, cache: 'reload' }}
+            style={StyleSheet.absoluteFill} resizeMode="contain" onLoad={() => mediaReadyChanged(true)} onError={mediaFailed} />
+            : <ReceivedVideo source={mediaSource} reveal={reveal} canPlay={canPlay} onReady={mediaReadyChanged} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />}
+        </View> : null}
+        {!reveal || !mediaReady ? <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View> : null}
       </View>
     </View>
     <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>
