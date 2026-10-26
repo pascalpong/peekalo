@@ -134,6 +134,8 @@ Run `pnpm --filter @peekalo/web build`, then `pnpm --filter @peekalo/web exec ne
 
 For disposable development projects only, set `PEEKALO_TEST_BASE_URL` and run `pnpm test:sharing`. This uses generated fixtures and temporary test accounts and cleans them up; never point it at production. It verifies real transactions, authorization and storage delivery rather than mocks. Existing capture/reveal unit tests remain in `pnpm check`.
 
+For an opt-in video admission observation against the same development backend, run `PEEKALO_TEST_VIDEO_CAPACITY=1 PEEKALO_TEST_BASE_URL=https://your-development-api.example node --env-file=apps/web/.env.local scripts/test-hosted-video-capacity.mjs`. FFmpeg must be available. Run while other uploads are idle: it processes two generated ten-second pattern/tone clips under disposable accounts, observes an overlapping `429 processing_busy`, and retries after the first upload finishes. It reports elapsed times and normalized sizes, then cleans its own accounts/storage. Uncertain server work is preserved with a private recovery receipt under `.cache/private`; inspect that receipt before scoped cleanup. This is an admission/retry observation, not a load benchmark or native-camera/playback verification.
+
 To repeat the verified localhost integration without changing the ignored app URL files, start the production gateway in one terminal, then run the suite in another:
 
 ```sh
