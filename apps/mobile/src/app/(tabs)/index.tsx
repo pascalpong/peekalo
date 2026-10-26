@@ -22,7 +22,13 @@ export default function CameraScreen() {
   const frame = frame916(window.width, window.height);
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [focused, setFocused] = useState(false);
+  const routeFocused = useRef(false);
+  const retryWindow = useRef<(() => void) | null>(null);
   const [active, setActive] = useState(AppState.currentState === 'active');
+  const [windowFocused, setWindowFocused] = useState(true);
+  const nativeWindowFocused = useRef(true);
+  const windowUsable = useRef(true);
+  const windowRevision = useRef(0);
   const [ready, setReady] = useState(false);
   const [facing, setFacing] = useState<CameraType>('back');
   const [cameraFailed, setCameraFailed] = useState(false);
@@ -53,6 +59,7 @@ export default function CameraScreen() {
   const [videoSession] = useState(() => createVideoSession({
     prepare: async () => {
       const preparingGeneration = generation.current;
+      if (!routeFocused.current || !windowUsable.current) return false;
       const permission = await Camera.getMicrophonePermissionsAsync();
       if (!permission.granted) {
         const result = permission.canAskAgain ? await Camera.requestMicrophonePermissionsAsync() : permission;
@@ -62,7 +69,7 @@ export default function CameraScreen() {
         }
         return false;
       }
-      if (!mounted.current || AppState.currentState !== 'active' || preparingGeneration !== generation.current) return false;
+      if (!mounted.current || !routeFocused.current || !windowUsable.current || AppState.currentState !== 'active' || preparingGeneration !== generation.current) return false;
       setVideoHint(null);
       setMicBlocked(false);
       setReady(false);
@@ -112,7 +119,7 @@ export default function CameraScreen() {
   const reviewing = snapshot.status === 'review' || reviewingVideo;
   const videoBusy = video.status === 'preparing' || video.status === 'recording' || video.status === 'stopping';
   const capturing = snapshot.status === 'capturing';
-  const showCamera = physicalPhone && permission?.granted && focused && active && !cameraFailed && !reviewing && !sharing;
+  const showCamera = physicalPhone && permission?.granted && focused && active && windowFocused && !cameraFailed && !reviewing && !sharing;
   const viewIdentity = useMemo(() => ({}), [showCamera, mode, facing]);
   const latestViewIdentity = useRef(viewIdentity);
   latestViewIdentity.current = viewIdentity;
@@ -150,8 +157,11 @@ export default function CameraScreen() {
   }, [video.status]);
 
   useFocusEffect(useCallback(() => {
+    routeFocused.current = true;
     setFocused(true);
+    retryWindow.current?.();
     return () => {
+      routeFocused.current = false;
       setFocused(false);
       setReady(false);
       interrupt();
@@ -159,16 +169,46 @@ export default function CameraScreen() {
   }, [interrupt]));
 
   useEffect(() => {
+    let alive = true;
+    const resumeWindow = () => {
+      if (!routeFocused.current || !nativeWindowFocused.current || AppState.currentState !== 'active') return;
+      const revision = ++windowRevision.current;
+      setPermissionFailed(false);
+      windowUsable.current = false;
+      setWindowFocused(false);
+      setReady(false);
+      const permissionCheck = physicalPhone ? getPermission() : Promise.resolve();
+      void permissionCheck.then(() => {
+        if (!alive || revision !== windowRevision.current || !routeFocused.current || !nativeWindowFocused.current || AppState.currentState !== 'active') return;
+        setPermissionFailed(false);
+        windowUsable.current = true;
+        setWindowFocused(true);
+      }).catch(() => { if (alive && revision === windowRevision.current) setPermissionFailed(true); });
+    };
+    const obscureWindow = () => {
+      windowRevision.current++;
+      // Android's shade/call overlays can remove window focus while AppState
+      // stays active. Fence queued shutter/readiness events before React renders.
+      windowUsable.current = false;
+      setWindowFocused(false);
+      setReady(false);
+      interrupt();
+    };
     const subscription = AppState.addEventListener('change', state => {
       setActive(state === 'active');
-      if (state !== 'active') {
-        setReady(false);
-        interrupt();
-      } else if (physicalPhone) {
-        void getPermission().then(() => setPermissionFailed(false)).catch(() => setPermissionFailed(true));
-      }
+      if (state !== 'active') obscureWindow();
+      else resumeWindow();
     });
-    return () => { subscription.remove(); interrupt(); };
+    const blur = Platform.OS === 'android' ? AppState.addEventListener('blur', () => {
+      nativeWindowFocused.current = false;
+      obscureWindow();
+    }) : null;
+    const focus = Platform.OS === 'android' ? AppState.addEventListener('focus', () => {
+      nativeWindowFocused.current = true;
+      resumeWindow();
+    }) : null;
+    retryWindow.current = resumeWindow;
+    return () => { alive = false; retryWindow.current = null; windowRevision.current++; subscription.remove(); blur?.remove(); focus?.remove(); interrupt(); };
   }, [getPermission, physicalPhone, interrupt]);
 
   useEffect(() => {
@@ -190,7 +230,7 @@ export default function CameraScreen() {
     try { await Linking.openSettings(); } catch { setPermissionFailed(true); }
   };
   const takePhoto = () => {
-    if (!canCapture || !camera.current) return;
+    if (!canCapture || !routeFocused.current || !windowUsable.current || !camera.current) return;
     const currentCamera = camera.current;
     setVideoHint(null);
     void session.capture(async () => {
@@ -208,7 +248,7 @@ export default function CameraScreen() {
       {showCamera && <CameraView ref={camera} style={styles.preview} facing={facing}
         mirror={facing === 'front'} mode={mode} ratio="16:9" videoQuality="1080p" mute={false}
         onCameraReady={() => {
-          if (latestViewIdentity.current !== viewIdentity || !showCamera) return;
+          if (latestViewIdentity.current !== viewIdentity || !showCamera || !routeFocused.current || !windowUsable.current) return;
           setReady(true);
           if (mode === 'video' && pendingReady.current) {
             const pending = pendingReady.current;
@@ -218,12 +258,12 @@ export default function CameraScreen() {
           }
         }}
         onMountError={() => {
-          if (latestViewIdentity.current !== viewIdentity || !showCamera) return;
+          if (latestViewIdentity.current !== viewIdentity || !showCamera || !routeFocused.current || !windowUsable.current) return;
           setReady(false); setCameraFailed(true); interrupt();
         }} />}
-      {reviewing && active && focused && !sharing && snapshot.photo && <Image source={{ uri: snapshot.photo.uri }}
+      {reviewing && active && focused && windowFocused && !sharing && snapshot.photo && <Image source={{ uri: snapshot.photo.uri }}
         accessibilityLabel="Your captured photo" style={StyleSheet.absoluteFill} resizeMode="contain" />}
-      {reviewingVideo && active && focused && !sharing && video.video && <VideoReview key={video.video.uri} uri={video.video.uri} />}
+      {reviewingVideo && active && focused && windowFocused && !sharing && video.video && <VideoReview key={video.video.uri} uri={video.video.uri} />}
     </View>
 
     <View pointerEvents="none" style={[styles.logoPosition, { top: insets.top + 14, left: Math.max(insets.left, 24) }]}>
@@ -273,7 +313,7 @@ export default function CameraScreen() {
             disabled={!showCamera || capturing || (!ready && !videoBusy)} delayLongPress={300}
             onPressIn={() => { longPress.current = false; }}
             onLongPress={() => {
-              if (!canCapture) return;
+              if (!canCapture || !routeFocused.current || !windowUsable.current) return;
               longPress.current = true;
               setElapsed(0);
               void videoSession.start();
@@ -293,6 +333,7 @@ export default function CameraScreen() {
     {shareCapture && <ShareCapture visible={sharing} capture={shareCapture} onClose={closeShare} />}
     {(snapshot.error || video.error || permissionFailed || videoHint) && <View style={[styles.errorBanner, { top: insets.top + 76 }]}>
       <Text accessibilityRole="alert" style={styles.errorText}>{snapshot.error ?? videoHint ?? video.error ?? 'Camera access couldn’t be updated. Try again.'}</Text>
+      {permissionFailed && <Pressable accessibilityRole="button" onPress={() => retryWindow.current?.()}><Text style={styles.settingsText}>Retry camera access</Text></Pressable>}
       {micBlocked && <Pressable accessibilityRole="button" onPress={() => { void openSettings(); }}><Text style={styles.settingsText}>Open microphone settings</Text></Pressable>}
     </View>}
   </View>;

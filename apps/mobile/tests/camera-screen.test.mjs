@@ -19,11 +19,17 @@ const find = (node, predicate) => {
   return predicate(node) ? node : find(node.props?.children, predicate);
 };
 function harness(t, { microphone = { granted: true, canAskAgain: true }, permissionResult = { granted: true, canAskAgain: true } } = {}) {
-  const hooks = [], effects = new Map(), appListeners = new Set(), records = [], photos = [], deleted = [];
+  const hooks = [], effects = new Map(), appListeners = new Map(), routeEffects = new Set(), records = [], photos = [], deleted = [];
   const cameraPermission = { granted: true, canAskAgain: true };
-  const getPermission = async () => cameraPermission;
+  let permissionChecks = 0, permissionWait = null;
+  const getPermission = async () => {
+    permissionChecks++;
+    const permission = permissionWait ? await permissionWait.promise : cameraPermission;
+    Object.assign(cameraPermission, permission); schedule();
+    return permission;
+  };
   const jsx = (type, props, key) => ({ type, props, key });
-  let cursor = 0, component, tree, mounted = true, scheduled = false, native = null;
+  let cursor = 0, component, tree, mounted = true, scheduled = false, native = null, routeFocused = true;
   let cameraMounts = 0, cameraUnmounts = 0, stops = 0, micRequests = 0;
   const same = (a, b) => a?.length === b?.length && a.every((value, i) => Object.is(value, b[i]));
   const schedule = () => {
@@ -58,8 +64,10 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
       return getSnapshot();
     },
   };
-  const AppState = { currentState: 'active', addEventListener: (_event, callback) => {
-    appListeners.add(callback); return { remove: () => appListeners.delete(callback) };
+  const AppState = { currentState: 'active', addEventListener: (event, callback) => {
+    if (!appListeners.has(event)) appListeners.set(event, new Set());
+    const listeners = appListeners.get(event);
+    listeners.add(callback); return { remove: () => listeners.delete(callback) };
   } };
   const render = () => {
     cursor = 0; tree = component();
@@ -85,7 +93,11 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     } },
     'expo-device': { isDevice: true },
     'expo-file-system': { File: class { constructor(uri) { this.uri = uri; } exists = true; delete() { deleted.push(this.uri); } } },
-    'expo-router': { useFocusEffect: callback => useEffect(callback, [callback]) },
+    'expo-router': { useFocusEffect: callback => useEffect(() => {
+      const entry = { callback, cleanup: routeFocused ? callback() : null };
+      routeEffects.add(entry);
+      return () => { entry.cleanup?.(); routeEffects.delete(entry); };
+    }, [callback]) },
     'expo-status-bar': { StatusBar: 'StatusBar' },
     'react-native': { AppState, BackHandler: { addEventListener: () => ({ remove() {} }) }, Image: 'Image', Linking: { openSettings: async () => {} }, Platform: { OS: 'android' }, Pressable: 'Pressable', Text: 'Text', View: 'View', ActivityIndicator: 'ActivityIndicator', StyleSheet: { create: value => value, absoluteFill: {} }, useWindowDimensions: () => ({ width: 400, height: 800 }) },
     'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) },
@@ -113,13 +125,25 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     hold() { shutter().onPressIn(); shutter().onLongPress(); },
     release() { shutter().onPressOut(); shutter().onPress(); },
     tap() { shutter().onPressIn(); shutter().onPressOut(); shutter().onPress(); },
-    press(label) { const node = find(tree, node => node.props?.accessibilityLabel === label || find(node.props?.children, child => child.type === 'Text' && child.props.children === label)); assert(node, `Missing ${label}`); node.props.onPress(); },
+    press(label) { const node = find(tree, node => typeof node.props?.onPress === 'function' && (node.props.accessibilityLabel === label || find(node.props.children, child => child.type === 'Text' && child.props.children === label))); assert(node, `Missing ${label}`); node.props.onPress(); },
     mode: () => find(tree, node => node.type === 'CameraView')?.props.mode,
     facing: () => find(tree, node => node.type === 'CameraView')?.props.facing,
     review: () => find(tree, node => node.type === 'VideoReview')?.props.uri,
+    photoReview: () => find(tree, node => node.props?.accessibilityLabel === 'Your captured photo')?.props.source.uri,
+    share: () => find(tree, node => node.type === 'ShareCapture')?.props,
     error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
     mounts: () => cameraMounts, unmounts: () => cameraUnmounts, stops: () => stops, micRequests: () => micRequests,
-    app(state) { AppState.currentState = state; for (const listener of appListeners) listener(state); },
+    permissionChecks: () => permissionChecks,
+    deferPermission() { permissionWait = deferred(); return permissionWait; },
+    event(name, value) { for (const listener of appListeners.get(name) ?? []) listener(value); },
+    app(state) { AppState.currentState = state; this.event('change', state); },
+    route(focused) {
+      routeFocused = focused;
+      for (const entry of routeEffects) {
+        if (focused) entry.cleanup = entry.callback();
+        else { entry.cleanup?.(); entry.cleanup = null; }
+      }
+    },
   };
 }
 
@@ -201,4 +225,149 @@ test('first microphone permission hold asks once and requires a new deliberate h
   assert.equal(h.micRequests(), 1); assert.equal(h.records.length, 0);
   assert.equal(h.mode(), 'picture'); assert.equal(h.mounts(), 1);
   assert.match(h.error(), /Hold again/);
+});
+
+test('Android window blur stops recording synchronously and cleans its late result without restarting on focus', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  h.hold(); await flush(); h.ready(); await flush();
+  h.event('blur');
+  assert.equal(h.stops(), 1, 'Blur must stop the recorder before rendering');
+  await flush();
+  assert.equal(h.mode(), undefined, 'Preview is unmounted even when AppState stays active');
+  h.records[0].resolve({ uri: 'file:///fixture/blurred.mp4' }); await flush();
+  assert.equal(h.review(), undefined);
+  assert.deepEqual(h.deleted, ['file:///fixture/blurred.mp4']);
+  const permission = h.deferPermission();
+  h.event('focus'); await flush();
+  assert.equal(h.permissionChecks(), 1);
+  assert.equal(h.mode(), undefined, 'Await refreshed permission before restoring camera');
+  permission.resolve({ granted: true, canAskAgain: true }); await flush();
+  assert.equal(h.mode(), 'picture');
+  assert.equal(h.shutter().disabled, true, 'Restored native preview must become ready again');
+  h.ready(); await flush();
+  assert.equal(h.shutter().disabled, false);
+  assert.equal(h.records.length, 1, 'Focus cannot restart an interrupted hold');
+});
+
+test('Android blur cancels pending preparation and ignores stale readiness and focus permission results', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  h.hold(); await flush();
+  const staleReady = h.readyCallback();
+  h.event('blur'); staleReady(); await flush();
+  assert.equal(h.records.length, 0);
+  assert.equal(h.mode(), undefined);
+  const permission = h.deferPermission();
+  h.event('focus'); await flush(); h.event('blur');
+  permission.resolve({ granted: true, canAskAgain: true }); await flush();
+  assert.equal(h.mode(), undefined, 'An old focus result cannot uncover a blurred window');
+});
+
+for (const kind of ['photo', 'video']) {
+  test(`Android blur removes ordinary ${kind} review and deletes its draft`, async t => {
+    const h = harness(t); await flush(); h.ready(); await flush();
+    const uri = `file:///fixture/review.${kind === 'photo' ? 'jpg' : 'mp4'}`;
+    if (kind === 'photo') { h.tap(); h.photos[0].resolve({ uri, width: 900, height: 1600 }); }
+    else { h.hold(); await flush(); h.ready(); await flush(); h.release(); h.records[0].resolve({ uri }); }
+    await flush();
+    assert.equal(kind === 'photo' ? h.photoReview() : h.review(), uri);
+    h.event('blur'); await flush();
+    assert.equal(h.photoReview(), undefined); assert.equal(h.review(), undefined);
+    assert.deepEqual(h.deleted, [uri]);
+    h.event('focus'); await flush();
+    assert.equal(h.photoReview(), undefined); assert.equal(h.review(), undefined);
+  });
+
+  test(`Android blur preserves the explicit Share ${kind} draft while keeping review covered`, async t => {
+    const h = harness(t); await flush(); h.ready(); await flush();
+    const uri = `file:///fixture/share.${kind === 'photo' ? 'jpg' : 'mp4'}`;
+    if (kind === 'photo') { h.tap(); h.photos[0].resolve({ uri, width: 900, height: 1600 }); }
+    else { h.hold(); await flush(); h.ready(); await flush(); h.release(); h.records[0].resolve({ uri }); }
+    await flush(); h.press('Share this moment'); await flush();
+    h.event('blur'); await flush();
+    assert.equal(h.share().capture.uri, uri); assert.equal(h.share().visible, true);
+    assert.equal(h.photoReview(), undefined); assert.equal(h.review(), undefined);
+    assert.deepEqual(h.deleted, []);
+    h.share().onClose(); await flush();
+    assert.equal(h.photoReview(), undefined); assert.equal(h.review(), undefined, 'Closing Share while blurred cannot uncover review');
+    h.event('focus'); await flush();
+    assert.equal(kind === 'photo' ? h.photoReview() : h.review(), uri);
+    h.press('Discard'); await flush(); assert.deepEqual(h.deleted, [uri]);
+  });
+}
+
+test('Android blur rejects a late photo and stale shutter callbacks before rendering', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  const shutter = h.shutter();
+  h.event('blur'); shutter.onPress(); shutter.onLongPress(); await flush();
+  assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
+  h.event('focus'); await flush(); h.ready(); await flush(); h.tap();
+  h.event('blur'); h.photos[0].resolve({ uri: 'file:///fixture/late.jpg', width: 900, height: 1600 }); await flush();
+  assert.equal(h.photoReview(), undefined);
+  assert.deepEqual(h.deleted, ['file:///fixture/late.jpg']);
+});
+
+test('focus permission refresh respects revoked camera access and a later Settings recovery', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush(); h.event('blur'); await flush();
+  const denied = h.deferPermission(); h.event('focus');
+  denied.resolve({ granted: false, canAskAgain: false }); await flush();
+  assert.equal(h.mode(), undefined); assert.equal(h.shutter().disabled, true);
+  h.event('blur'); const granted = h.deferPermission(); h.event('focus');
+  granted.resolve({ granted: true, canAskAgain: true }); await flush();
+  assert.equal(h.mode(), 'picture'); assert.equal(h.shutter().disabled, true);
+  h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+  assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
+});
+
+for (const order of [['focus', 'active'], ['active', 'focus']]) {
+  test(`window resumes safely when Android sends ${order.join(' then ')} after background`, async t => {
+    const h = harness(t); await flush(); h.ready(); await flush();
+    h.event('blur'); h.app('background'); await flush();
+    for (const event of order) { if (event === 'active') h.app('active'); else h.event(event); await flush(); }
+    assert.equal(h.mode(), 'picture'); assert.equal(h.shutter().disabled, true);
+    h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+    assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
+  });
+}
+
+test('route cleanup synchronously fences queued shutters before navigation renders', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  const shutter = h.shutter();
+  h.route(false); shutter.onPress(); shutter.onLongPress(); await flush();
+  assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
+  assert.equal(h.mode(), undefined);
+  h.route(true); await flush();
+  assert.equal(h.shutter().disabled, true);
+  h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+});
+
+test('route cleanup rejects stale preparation readiness without restarting on return', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  h.hold(); await flush(); const staleReady = h.readyCallback();
+  h.route(false); staleReady(); await flush();
+  assert.equal(h.records.length, 0); assert.equal(h.mode(), undefined);
+  h.route(true); await flush(); h.ready(); await flush();
+  assert.equal(h.records.length, 0); assert.equal(h.mode(), 'picture');
+});
+
+test('failed focus permission refresh offers an explicit retry and waits covered for success', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  h.event('blur'); const failed = h.deferPermission(); h.event('focus');
+  failed.reject(new Error('Synthetic permission transport failure')); await flush();
+  assert.equal(h.mode(), undefined); assert.equal(h.shutter().disabled, true);
+  const retry = h.deferPermission(); h.press('Retry camera access'); await flush();
+  assert.equal(h.permissionChecks(), 2); assert.equal(h.mode(), undefined);
+  retry.resolve({ granted: true, canAskAgain: true }); await flush();
+  assert.equal(h.mode(), 'picture'); assert.equal(h.shutter().disabled, true);
+  h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+});
+
+test('a retried permission refresh cannot restore capture after another interruption', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  h.event('blur'); const failed = h.deferPermission(); h.event('focus');
+  failed.reject(new Error('Synthetic permission transport failure')); await flush();
+  const retry = h.deferPermission(); h.press('Retry camera access');
+  h.event('blur'); h.app('background');
+  retry.resolve({ granted: true, canAskAgain: true }); await flush();
+  assert.equal(h.mode(), undefined); assert.equal(h.shutter().disabled, true);
+  assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
 });
