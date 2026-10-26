@@ -24,6 +24,8 @@ function ReceivedVideo({ source, reveal, canPlay, onReady, onError, position, pa
   const player = useVideoPlayer({ uri: source.uri, headers: { Authorization: source.authorization }, useCaching: false }, p => {
     p.allowsExternalPlayback = false;
     p.loop = false;
+    // Keep Android's startup/rebuffer target below a two-second prepaid slice.
+    if (Platform.OS === 'android') p.bufferOptions = { preferredForwardBufferDuration: 1, minBufferForPlayback: 0.1 };
     p.currentTime = position.current;
     p.timeUpdateEventInterval = 0.1;
   });
