@@ -8,6 +8,8 @@ import ts from 'typescript';
 // Execute the real recovery coordinator, secure storage adapter, native intent
 // and screen callbacks. Auth/native adapters use only disposable memory data.
 const sources = Object.fromEntries([
+  ['confirmScreen', '../src/app/confirm-email.tsx'],
+  ['confirmation', '../src/lib/auth-confirmation.ts'], ['links', '../src/lib/auth-links.ts'],
   ['sharing', '../src/lib/sharing-client.ts'], ['recovery', '../src/lib/auth-recovery.ts'],
   ['intent', '../src/app/+native-intent.tsx'], ['screen', '../src/app/reset-password.tsx'],
   ['share', '../src/components/share-capture.tsx'],
@@ -22,7 +24,7 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 
-function harness({ store = new Map(), exchange, update, request, marker = 'recovery', mainUser = 'existing-main-account', login } = {}) {
+function harness({ store = new Map(), exchange, update, request, marker = 'recovery', mainUser = 'existing-main-account', login, confirmed = true, env = {}, signupError, profileRequest } = {}) {
   const clients = [], calls = [], logs = [], navigation = [];
   const mainSession = mainUser ? { user: { id: mainUser }, access_token: 'ordinary-login' } : null;
   let api;
@@ -42,6 +44,20 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
           const value = recovery ? await storage.getItem(storageKey) : null;
           return { data: { session: recovery ? value ? JSON.parse(value) : null : mainSession }, error: null };
         },
+        async signUp({ email, options }) {
+          assert(options.auth === undefined);
+          assert(storageKey.startsWith('confirmation-'), 'Signup must use its isolated client');
+          calls.push({ method: 'signup', email, options });
+          await storage.setItem(`${storageKey}-code-verifier`, 'secure-fixture-verifier/recovery');
+          await storage.setItem(`${storageKey}-flow-fixture-code-verifier`, 'secure-fixture-verifier/recovery');
+          return { data: { session: null }, error: signupError ?? null };
+        },
+        async resend({ email, options, type }) {
+          assert.equal(type, 'signup');
+          calls.push({ method: 'resend', email, options });
+          await storage.setItem(`${storageKey}-code-verifier`, 'secure-fixture-verifier/recovery');
+          return { data: { session: null }, error: signupError ?? null };
+        },
         async resetPasswordForEmail(email, options) {
           assert(recovery, 'Reset requests must never use the ordinary auth client');
           calls.push({ method: 'request', email, options });
@@ -55,10 +71,10 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
           const verifier = await storage.getItem(`${storageKey}-code-verifier`);
           if (exchange) await exchange();
           if (verifier !== 'secure-fixture-verifier/recovery' || code !== 'fixture-code') return { data: { session: null }, error: { message: 'private-server-details' } };
-          const session = { user: { id: 'recovered-account' }, access_token: 'isolated-token', refresh_token: 'isolated-refresh' };
+          const session = { user: { id: 'recovered-account', email_confirmed_at: confirmed ? '2026-10-28T00:00:00Z' : null }, access_token: 'isolated-token', refresh_token: 'isolated-refresh' };
           await storage.setItem(storageKey, JSON.stringify(session));
           await storage.removeItem(`${storageKey}-code-verifier`);
-          return { data: { session, redirectType: marker }, error: null };
+          return { data: { session, redirectType: storageKey.startsWith('confirmation-') && marker === 'recovery' ? null : marker }, error: null };
         },
         async updateUser(attributes) {
           assert(recovery, 'Password updates must use the isolated session');
@@ -87,13 +103,14 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
     '@expo/vector-icons/AntDesign': { default: 'AntDesign' }, '@expo/vector-icons/Feather': { default: 'Feather' },
     'expo-router': { Stack: { Screen: 'StackScreen' }, useFocusEffect: callback => { focusEffect = callback; }, router: { replace: path => navigation.push(path) } },
     '../components/ui': { colors: {}, Screen: 'Screen', tokens: { font: {} } },
+    './apple-sign-in': { AppleSignIn: 'AppleSignIn' },
     './ui': { colors: {}, tokens: { font: {} } }, './brand': { BrandLogo: 'BrandLogo' },
   };
   Object.assign(adapters['react-native'], { StyleSheet: { create: value => value }, Platform: { OS: 'android' }, AppState: { currentState: 'active', addEventListener() {} }, BackHandler: { addEventListener(_event, callback) { backHandler = callback; return { remove() { backHandler = undefined; } }; } } });
   const context = vm.createContext({ URL: globalThis.URL, AbortController: globalThis.AbortController, FormData: globalThis.FormData, Promise, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
-    process: { env: { EXPO_PUBLIC_API_URL: 'https://api.example.invalid' } }, __DEV__: true,
+    process: { env: { EXPO_PUBLIC_API_URL: 'https://api.example.invalid', ...env } }, __DEV__: true,
     console: { log: (...args) => logs.push(args), warn: (...args) => logs.push(args), error: (...args) => logs.push(args) },
-    fetch: async url => url.endsWith('/config')
+    fetch: async (url, options) => profileRequest && url.endsWith('/api/profile') ? profileRequest(options) : url.endsWith('/config')
       ? globalThis.Response.json({ ready: true, supabaseUrl: 'https://auth.example.invalid', supabaseAnonKey: 'fixture-public-key' })
       : globalThis.Response.json({ external: { google: false, email: true } }),
   });
@@ -102,6 +119,8 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
     const exported = {};
     modules[name] = exported;
     const require = path => {
+      if (path.endsWith('/auth-links')) return load('links');
+      if (path.endsWith('/auth-confirmation')) return load('confirmation');
       if (path.endsWith('/sharing-client') || path === './sharing-client') return load('sharing');
       if (path.endsWith('/auth-recovery') || path === './auth-recovery') return load('recovery');
       assert(Object.hasOwn(adapters, path), `Unexpected module ${path}`);
@@ -112,7 +131,7 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
   };
   api = load('recovery');
   return {
-    api, store, calls, clients, logs, navigation, sharing: load('sharing'), intent: load('intent'),
+    api, confirmation: load('confirmation'), links: load('links'), store, calls, clients, logs, navigation, sharing: load('sharing'), intent: load('intent'),
     async requested() { return api.requestPasswordRecovery('fixture@example.invalid'); },
     async prepared() {
       await this.requested();
@@ -139,14 +158,14 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
         useCallback(fn, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) hooks[i] = { fn, deps }; return hooks[i].fn; },
         useEffect(fn, deps) { const i = cursor++; if (!hooks[i] || !same(hooks[i].deps, deps)) { hooks[i] = { deps, cleanup: hooks[i]?.cleanup }; effects.set(i, fn); } },
       };
-      const component = name === 'screen' ? load(name).default : load(name).ShareCapture;
+      const component = ['screen', 'confirmScreen'].includes(name) ? load(name).default : load(name).ShareCapture;
       const render = () => {
         cursor = 0; tree = component(props);
         for (const [i, fn] of effects) { hooks[i].cleanup?.(); hooks[i].cleanup = fn(); }
         effects.clear();
       };
       render();
-      if (name === 'screen') cleanup = focusEffect();
+      if (['screen', 'confirmScreen'].includes(name)) cleanup = focusEffect();
       const unmount = () => { if (!mounted) return; cleanup?.(); for (const hook of hooks) hook.cleanup?.(); mounted = false; };
       t.after(unmount);
       const lookup = label => find(tree, node => node.props?.accessibilityLabel === label || node.props?.label === label || typeof node.props?.onPress === 'function' && find(node.props?.children, child => child.type === 'Text' && child.props.children === label));
@@ -368,4 +387,121 @@ test('recovery Auth uses the same bounded transport as ordinary account commits'
   const h = harness(); await h.sharing.getSharingClient(); await h.sharing.getPasswordRecoveryClient();
   assert.equal(typeof h.clients[0].options.global.fetch, 'function');
   assert.equal(h.clients[1].options.global.fetch, h.clients[0].options.global.fetch);
+});
+
+test('confirmation signup and resend use an isolated PKCE namespace and exact redirect', async () => {
+  const h = harness();
+  const message = await h.confirmation.requestEmailConfirmation(' fixture@example.invalid ', 'fixture-pass');
+  assert.match(message, /If this email needs confirmation/);
+  assert.equal(h.calls[0].method, 'signup');
+  assert.equal(h.calls[0].options.emailRedirectTo, 'peekalo://confirm-email');
+  const resend = await h.confirmation.requestEmailConfirmation('fixture@example.invalid', null);
+  assert.equal(resend, message);
+  assert.equal(h.calls[1].method, 'resend');
+  assert(h.clients.filter(client => client.recovery).every(client => client.options.auth.storageKey.startsWith('confirmation-')));
+  assert(!h.calls.some(call => call.method.startsWith('MAIN-')));
+  assert.deepEqual(h.logs, []);
+});
+
+test('confirmation survives cold verifier restoration, consumes once and preserves ordinary login', async () => {
+  const store = new Map();
+  const original = harness({ store });
+  await original.confirmation.requestEmailConfirmation('fixture@example.invalid', 'fixture-pass');
+  const cold = harness({ store });
+  const path = 'peekalo://confirm-email?code=fixture-code';
+  assert.equal(cold.intent.redirectSystemPath({ path, initial: true }), '/confirm-email');
+  const id = cold.confirmation.emailConfirmationRevision();
+  await cold.confirmation.completeEmailConfirmation(id);
+  assert.equal(store.size, 0, 'Confirmation credentials are removed after consumption');
+  await assert.rejects(cold.confirmation.completeEmailConfirmation(id), error => error.code === 'invalid_confirmation');
+  assert.equal((await (await cold.sharing.getSharingClient()).auth.getSession()).data.session.user.id, 'existing-main-account');
+  assert(!cold.calls.some(call => call.method.startsWith('MAIN-')));
+});
+
+test('HTTPS email callbacks only accept this build origin and exact paths; duplicate/token/errors fail closed', async () => {
+  const h = harness({ env: { EXPO_PUBLIC_AUTH_LINK_ORIGIN: 'https://app.example.invalid' } });
+  assert.equal(h.links.emailRedirectUrl('confirmation'), 'https://app.example.invalid/auth/confirm');
+  assert.equal(h.links.emailRedirectUrl('recovery'), 'https://app.example.invalid/auth/reset-password');
+  assert.equal(h.intent.redirectSystemPath({ path: 'https://app.example.invalid/auth/confirm?code=fixture-code&sb_flow_id=fixture-flow', initial: true }), '/confirm-email');
+  assert.equal(h.links.emailCallback('https://other.example.invalid/auth/confirm?code=fixture-code', 'confirmation'), null);
+  assert.equal(h.links.emailCallback('https://app.example.invalid/auth/confirm/extra?code=fixture-code', 'confirmation'), null);
+  for (const query of ['code=a&code=b', 'code=a&access_token=secret', 'error=denied', 'code=a#secret', 'code=a&sb_flow_id=x&sb_flow_id=y', 'code=a&redirect_to=https://evil.invalid']) {
+    assert.equal(h.confirmation.receiveEmailConfirmationUrl(`https://app.example.invalid/auth/confirm?${query}`), true);
+    await assert.rejects(h.confirmation.completeEmailConfirmation(h.confirmation.emailConfirmationRevision()), error => error.code === 'invalid_confirmation');
+  }
+  assert(!h.calls.some(call => call.method === 'exchange'));
+});
+
+test('confirmation rejects unconfirmed sessions and cancellation of a late exchange', async () => {
+  const h = harness({ confirmed: false });
+  await h.confirmation.requestEmailConfirmation('fixture@example.invalid', 'fixture-pass');
+  h.confirmation.receiveEmailConfirmationUrl('peekalo://confirm-email?code=fixture-code');
+  await assert.rejects(h.confirmation.completeEmailConfirmation(h.confirmation.emailConfirmationRevision()), error => error.code === 'invalid_confirmation');
+  assert.equal(h.store.size, 0);
+  const wait = deferred();
+  const late = harness({ exchange: () => wait.promise });
+  await late.confirmation.requestEmailConfirmation('fixture@example.invalid', 'fixture-pass');
+  late.confirmation.receiveEmailConfirmationUrl('peekalo://confirm-email?code=fixture-code');
+  const id = late.confirmation.emailConfirmationRevision();
+  const task = late.confirmation.completeEmailConfirmation(id);
+  await flush();
+  late.confirmation.cancelEmailConfirmation(id);
+  wait.resolve();
+  await assert.rejects(task, error => error.code === 'cancelled');
+  await flush();
+  assert.equal(late.store.size, 0);
+  assert(!late.calls.some(call => call.method.startsWith('MAIN-')));
+});
+
+test('confirmation validates inputs and sanitizes signup rate/provider failures', async () => {
+  const h = harness();
+  await assert.rejects(h.confirmation.requestEmailConfirmation('bad email', 'fixture-pass'), /email address/);
+  await assert.rejects(h.confirmation.requestEmailConfirmation('fixture@example.invalid', 'short'), /8 characters/);
+  assert.equal(h.calls.length, 0);
+  const rate = harness({ signupError: { status: 429, message: 'private backend details' } });
+  await assert.rejects(rate.confirmation.requestEmailConfirmation('fixture@example.invalid', null), /Please wait/);
+  assert.deepEqual(rate.logs, []);
+});
+
+test('warm confirmation dismisses account modal and confirmation screen requires deliberate sign-in', async t => {
+  const h = harness();
+  const modal = h.mount(t, 'share', { visible: true, capture: null, onClose: () => h.navigation.push('dismiss') });
+  await flush();
+  await h.confirmation.requestEmailConfirmation('fixture@example.invalid', 'fixture-pass');
+  assert.equal(h.intent.redirectSystemPath({ path: 'peekalo://confirm-email?code=fixture-code', initial: false }), '/confirm-email');
+  assert(h.navigation.includes('dismiss'));
+  modal.unmount();
+  const screen = h.mount(t, 'confirmScreen');
+  await flush();
+  assert(screen.text().includes('Email confirmed.'));
+  assert(!h.calls.some(call => call.method.startsWith('MAIN-')));
+});
+
+test('new account username conflict stays editable and available-name retry completes onboarding', async t => {
+  let saved = null;
+  const h = harness({ profileRequest: options => {
+    if (options?.method === 'POST') {
+      const { username } = JSON.parse(options.body);
+      if (username === 'taken_name') return Response.json({ error: 'username_taken' }, { status: 409 });
+      saved = username;
+      return Response.json({ username });
+    }
+    return Response.json({ username: null });
+  } });
+  const panel = h.mount(t, 'share', { visible: true, capture: null, onClose() {} });
+  await flush();
+  assert(panel.has('Your username'));
+  panel.change('Your username', '@Taken_Name');
+  await flush();
+  panel.press('Save username');
+  await flush();
+  assert.match(panel.error(), /taken/);
+  assert(panel.has('Your username'));
+  panel.change('Your username', '@Fresh_Name');
+  await flush();
+  panel.press('Save username');
+  await flush();
+  assert.equal(saved, 'fresh_name');
+  assert(panel.text().includes('You’re ready, @'));
+  assert(!panel.has('Your username'));
 });

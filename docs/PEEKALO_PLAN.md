@@ -314,3 +314,5 @@ Do not create custom skills yet. Once the workflows are proven and repeated, can
 4. What launch countries and age group are intended? The proposed adult invited beta is only a planning default.
 
 The first implementation milestone should capture one photo and one short video inside the app, then share them to an account or through a single-use link and verify cumulative reveal behavior on Android, iOS and web. Complete that evidence before investing in media-list polish or chat.
+
+REL-01 account preparation (28 October): native confirmation/resend and recovery callbacks support isolated persisted PKCE verifiers with memory-only sessions; ordinary login is deliberate and username conflicts remain authoritative. Native iOS Apple login is the selected equivalent to retained Google (D-24), with opt-in domain associations for email callbacks only. README holds setup steps; the build board records source/local checks separately from domain/SMTP, intended Google audience, Apple provider/signing and signed-device evidence. Google’s basic identity scopes do not make its test-user list an application invite gate. Domain/provider remain pending by human choice.

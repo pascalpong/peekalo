@@ -3,7 +3,9 @@ import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, SharingError, signInWithGoogle, type AuthProviders } from '../lib/sharing-client';
+import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, SharingError, signInWithGoogle, signInWithApple, type AuthProviders } from '../lib/sharing-client';
+import { AppleSignIn } from './apple-sign-in';
+import { requestEmailConfirmation, subscribeEmailConfirmation } from '../lib/auth-confirmation';
 import { colors, tokens } from './ui';
 import { BrandLogo } from './brand';
 import { requestPasswordRecovery, subscribePasswordRecovery } from '../lib/auth-recovery';
@@ -55,11 +57,14 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; cancelOperation(); }; }, []);
   useEffect(() => {
     if (!visible) return;
-    return subscribePasswordRecovery(() => {
+    const dismiss = () => {
       cancelOperation(); setBusy(false); setPassword('');
       // A native Modal otherwise covers the new reset route on a warm link.
       closeCallback.current();
-    });
+    };
+    const recovery = subscribePasswordRecovery(dismiss);
+    const confirmation = subscribeEmailConfirmation(dismiss);
+    return () => { recovery(); confirmation(); };
   }, [visible]);
   useEffect(() => {
     if (draft.current?.uri !== captureUri) {
@@ -123,7 +128,12 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   function authenticate() {
     void run(async (current, signal) => {
       const credentials = { email: email.trim(), password };
-      const result = await performAccountAuth(client => signingUp ? client.auth.signUp(credentials) : client.auth.signInWithPassword(credentials), signal, commitChanged);
+      if (signingUp) {
+        const message = await requestEmailConfirmation(credentials.email, credentials.password, signal);
+        if (current()) { setPassword(''); setSigningUp(false); setNotice(message); }
+        return;
+      }
+      const result = await performAccountAuth(client => client.auth.signInWithPassword(credentials), signal, commitChanged);
       if (!current()) return;
       if (result.error) {
         const code = result.error.code;
@@ -145,6 +155,20 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     void run(async (current, signal) => {
       const signedIn = await signInWithGoogle(signal, commitChanged);
       if (signedIn && current()) await loadAccount(current, signal);
+    });
+  }
+
+  function continueWithApple() {
+    void run(async (current, signal) => {
+      const signedIn = await signInWithApple(signal, commitChanged);
+      if (signedIn && current()) await loadAccount(current, signal);
+    });
+  }
+  function resendConfirmation() {
+    setPassword('');
+    void run(async (current, signal) => {
+      const message = await requestEmailConfirmation(email, null, signal);
+      if (current()) setNotice(message);
     });
   }
 
@@ -276,12 +300,15 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
               <AntDesign name="google" size={20} color={colors.text} /><Text style={[styles.actionText, styles.secondaryText]}>Continue with Google</Text>
             </Pressable>
             {providers.google === false && <Text style={styles.body}>Google sign-in is not configured on this test backend yet.</Text>}
+            {Platform.OS === 'ios' && <AppleSignIn disabled={busy || providers.apple !== true} onPress={continueWithApple} />}
+            {Platform.OS === 'ios' && providers.apple !== true && <Text style={styles.body}>Apple sign-in is unavailable until this backend and iOS build are configured.</Text>}
             <Text style={styles.divider}>or use email</Text>
             {providers.email === false && <Text style={styles.body}>Email sign-in is disabled on this backend.</Text>}
             {signingUp && providers.email !== false && <Text style={styles.body}>Confirm your email before signing in. If the email does not arrive, ask the app owner to check email delivery.</Text>}
             <TextInput style={styles.input} accessibilityLabel="Email" placeholder="Email" placeholderTextColor={colors.muted} value={email} onChangeText={setEmail} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" autoComplete="email" editable={!busy} />
             <TextInput style={styles.input} accessibilityLabel="Password" placeholder={signingUp ? 'Password (at least 8 characters)' : 'Password'} placeholderTextColor={colors.muted} value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete={signingUp ? 'new-password' : 'current-password'} editable={!busy} />
             <Action label={signingUp ? 'Create account' : 'Sign in'} onPress={authenticate} disabled={busy || providers.email === false || !email.trim() || password.length < (signingUp ? 8 : 1)} />
+            {!signingUp && <Pressable accessibilityRole="button" disabled={busy || providers.email === false || !email.trim()} onPress={resendConfirmation} style={styles.textButton}><Text style={styles.textButtonLabel}>Resend confirmation email</Text></Pressable>}
             {!signingUp && <Pressable accessibilityRole="button" disabled={busy || providers.email === false} onPress={forgotPassword} style={styles.textButton}><Text style={styles.textButtonLabel}>Forgot password?</Text></Pressable>}
             <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setSigningUp(!signingUp); setError(''); setNotice(''); }} style={styles.textButton}><Text style={styles.textButtonLabel}>{signingUp ? 'Already have an account? Sign in' : 'New here? Create an account'}</Text></Pressable>
           </View>}

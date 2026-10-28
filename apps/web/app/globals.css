@@ -275,3 +275,9 @@ h1, h2 { font-family: var(--display-font); font-weight: 700; }
   .product-native { align-items: flex-start; flex-direction: column; gap: 24px; }
   .site-footer { flex-wrap: wrap; }
 }
+
+.auth-return { flex: 1; width: min(600px, 100%); margin: 64px auto; display: flex; flex-direction: column; gap: var(--pk-space-lg); }
+.auth-return h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.1; }
+.auth-return p { color: var(--muted); font-size: 16px; line-height: 1.7; }
+.auth-return-action { align-self: flex-start; border: 0; padding: 16px 28px; min-height: 52px; border-radius: var(--pk-radius-pill); background: var(--accent); color: var(--pk-color-on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+.auth-return-action:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }

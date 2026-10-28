@@ -17,7 +17,7 @@
     "build": "pnpm build:site && pnpm build:web",
     "export:mobile": "pnpm --filter @peekalo/mobile export",
     "test:mobile": "pnpm --filter @peekalo/mobile test",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:mobile && pnpm test:reveal && pnpm test:backend && pnpm test:hosting && pnpm test:uploads && pnpm test:delivery && pnpm test:waitlist && pnpm test:web-split && pnpm brand:check && pnpm build && pnpm export:mobile",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:mobile && pnpm test:accounts && pnpm test:reveal && pnpm test:backend && pnpm test:hosting && pnpm test:uploads && pnpm test:delivery && pnpm test:waitlist && pnpm test:web-split && pnpm brand:check && pnpm build && pnpm export:mobile",
     "test:hosting": "node --test scripts/test-hosting-runtime.mjs",
     "brand:generate": "node scripts/generate-brand.mjs",
     "brand:check": "node scripts/generate-brand.mjs --check",
@@ -35,7 +35,8 @@
     "local:stop": "node scripts/dev-local-backend.mjs stop",
     "dev:web:local": "node scripts/dev-local-apps.mjs web",
     "dev:mobile:local": "node scripts/dev-local-apps.mjs mobile",
-    "test:auth:local": "node --env-file=apps/web/.env.local-testing scripts/test-local-auth.mjs"
+    "test:auth:local": "node --env-file=apps/web/.env.local-testing scripts/test-local-auth.mjs",
+    "test:accounts": "node --test scripts/test-auth-return.mjs scripts/test-app-associations.mjs scripts/test-mobile-link-config.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

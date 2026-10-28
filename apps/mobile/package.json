@@ -27,6 +27,7 @@
     "@peekalo/reveal": "workspace:*",
     "@supabase/supabase-js": "2.117.3",
     "expo": "55.0.31",
+    "expo-apple-authentication": "55.0.17",
     "expo-build-properties": "55.0.18",
     "expo-camera": "55.0.23",
     "expo-constants": "55.0.17",

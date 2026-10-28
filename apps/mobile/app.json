@@ -13,7 +13,8 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.peekalo.preview"
+      "bundleIdentifier": "com.peekalo.preview",
+      "usesAppleSignIn": true
     },
     "android": {
       "package": "com.peekalo.preview",
@@ -51,7 +52,8 @@
         }
       ],
       "expo-video",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

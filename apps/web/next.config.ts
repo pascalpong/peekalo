@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async headers() {
     return [
+      { source: "/auth/:path*", headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }] },
       {
         source: "/:path*",
         headers: [

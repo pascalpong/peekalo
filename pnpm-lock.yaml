@@ -50,6 +50,9 @@ importers:
       expo:
         specifier: 55.0.31
         version: 55.0.31(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-router@55.0.18)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)
+      expo-apple-authentication:
+        specifier: 55.0.17
+        version: 55.0.17(expo@55.0.31)(react-native@0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1))
       expo-build-properties:
         specifier: 55.0.18
         version: 55.0.18(expo@55.0.31)
@@ -2350,6 +2353,12 @@ packages:
   event-target-shim@5.0.1:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}
     engines: {node: '>=6'}
+
+  expo-apple-authentication@55.0.17:
+    resolution: {integrity: sha512-ErPcEyLGsrXDOXdIuCc2MZNf/YZB2NZGBb/I9XtUYEsoO8cwWIfDE9AiLpSOxhv9p59gMtFRzdE1UR8jTBAhYA==}
+    peerDependencies:
+      expo: '*'
+      react-native: '*'
 
   expo-asset@55.0.20:
     resolution: {integrity: sha512-BpybBESZj8WxW/WXuQhiY8D1azkJtxLuteIfprokJw0uU5r/g7cD+vzrzKJSlE4hhUlKeUGsoKzSK0nSJJ2sMQ==}
@@ -6520,6 +6529,11 @@ snapshots:
   etag@1.8.1: {}
 
   event-target-shim@5.0.1: {}
+
+  expo-apple-authentication@55.0.17(expo@55.0.31)(react-native@0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1)):
+    dependencies:
+      expo: 55.0.31(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@55.0.6)(@expo/metro-runtime@55.0.12)(expo-router@55.0.18)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3)
+      react-native: 0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1)
 
   expo-asset@55.0.20(expo@55.0.31)(react-native@0.83.10(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1)(typescript@5.9.3):
     dependencies:

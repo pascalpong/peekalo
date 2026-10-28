@@ -66,7 +66,7 @@ Acceptance examples:
 
 Development implementation includes authenticated private upload/normalization, protected links, accepted recipient grants, a transactional cumulative ledger and owner revocation. SUPABASE-01 applies all four migrations and passes 64 live backend assertions with generated fixtures through the local production gateway. Unchecked end-to-end/beta criteria below still require their full acceptance evidence; general signup email and physical native sharing remain pending; HOST-02 now passes 71 hosted assertions.
 
-- [ ] Native email verification, recovery and username/profile; server-issued anonymous web cookie, no guest login requirement.
+- [ ] Native email verification, recovery and username/profile; server-issued anonymous web cookie, no guest login requirement. REL-01 prepares isolated confirmation/resend/cold-verifier callbacks and native Apple login alongside Google; local source/integration evidence is on the board. Domain/SMTP delivery, intended Google audience, Apple provider/signing/relay and distribution-signed real-domain cold callbacks remain required.
 - [ ] Reserve upload slots atomically; enforce the selected three-item policy.
 - [ ] Native camera capture only, private staging upload of those captures and safe progress/retry states; no gallery, photo-library or file imports.
 - [ ] Trusted type/size/dimensions/duration checks and resource-limited processing.

@@ -1,3 +1,4 @@
+import { emailCallback, emailRedirectUrl } from './auth-links';
 import { clearPasswordRecoveryStorage, getPasswordRecoveryClient, SharingError } from './sharing-client';
 
 export const passwordRecoveryRedirectUrl = 'peekalo://reset-password';
@@ -5,6 +6,7 @@ const invalidLink = () => new SharingError('This reset link is expired or unavai
 const cancelled = () => new SharingError('Password recovery was cancelled.', 'cancelled');
 let revision = 0;
 let pendingCode: string | null = null;
+let pendingFlowId: string | undefined;
 let ready: { revision: number; userId: string } | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 const listeners = new Set<() => void>();
@@ -20,16 +22,12 @@ function current(id: number, signal?: AbortSignal) {
 
 /** Consume callback data before Expo Router builds a route/navigation state. */
 export function receivePasswordRecoveryUrl(path: string) {
-  let url: URL;
-  try { url = new URL(path); } catch { return false; }
-  if (url.protocol !== 'peekalo:' || url.hostname !== 'reset-password') return false;
+  const callback = emailCallback(path, 'recovery');
+  if (!callback) return false;
   revision++;
   ready = null;
-  const codes = url.searchParams.getAll('code');
-  pendingCode = !url.username && !url.password && !url.port && (!url.pathname || url.pathname === '/') && !url.hash
-    && !url.searchParams.has('error') && !url.searchParams.has('error_code')
-    && !url.searchParams.has('access_token') && !url.searchParams.has('refresh_token')
-    && codes.length === 1 && /^[a-zA-Z0-9_-]{1,2048}$/.test(codes[0]) ? codes[0] : null;
+  pendingCode = callback.code;
+  pendingFlowId = callback.flowId;
   for (const listener of listeners) listener();
   return true;
 }
@@ -49,7 +47,7 @@ export function requestPasswordRecovery(email: string, signal?: AbortSignal) {
       await getPasswordRecoveryClient(signal);
       await clearPasswordRecoveryStorage();
       const client = await getPasswordRecoveryClient(signal);
-      const { error } = await client.auth.resetPasswordForEmail(address, { redirectTo: passwordRecoveryRedirectUrl });
+      const { error } = await client.auth.resetPasswordForEmail(address, { redirectTo: emailRedirectUrl('recovery') });
       if (signal?.aborted) throw cancelled();
       if (error) throw new SharingError(error.code === 'over_email_send_rate_limit' || error.status === 429
         ? 'Please wait before requesting another reset email.'
@@ -66,6 +64,7 @@ export function requestPasswordRecovery(email: string, signal?: AbortSignal) {
 
 export function preparePasswordRecovery(id: number, signal?: AbortSignal) {
   const code = id === revision ? pendingCode : null;
+  const flowId = id === revision ? pendingFlowId : undefined;
   if (id === revision) pendingCode = null; // Never exchange a callback twice.
   return serialized(async () => {
     try {
@@ -73,7 +72,7 @@ export function preparePasswordRecovery(id: number, signal?: AbortSignal) {
       if (!code) throw invalidLink();
       const client = await getPasswordRecoveryClient(signal);
       current(id, signal);
-      const { data, error } = await client.auth.exchangeCodeForSession(code);
+      const { data, error } = await client.auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined);
       current(id, signal);
       // The marker comes from the securely stored PKCE verifier, not URL input.
       // auth-js returns this marker at runtime; AuthTokenResponse's public type

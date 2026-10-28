@@ -96,23 +96,25 @@ const sessionStorage = {
 
 let clientPromise: Promise<SupabaseClient> | undefined;
 let authConfig: { supabaseUrl: string; supabaseAnonKey: string } | undefined;
-let recoveryClient: SupabaseClient | undefined;
-let recoveryStorageKey: string | undefined;
-let recoverySession: string | null = null;
+type EmailClient = { client?: SupabaseClient; key?: string; session: string | null };
+const emailClients: Record<'recovery' | 'confirmation', EmailClient> = {
+  recovery: { session: null }, confirmation: { session: null },
+};
 
-// Recovery verifiers survive opening email with the app closed. Its session is
-// deliberately memory-only and never becomes the ordinary app's login.
-export async function getPasswordRecoveryClient(signal?: AbortSignal) {
+// Email verifiers survive process death. Their sessions stay in memory and can
+// never replace an existing ordinary login (including a different account).
+async function getEmailClient(kind: 'recovery' | 'confirmation', signal?: AbortSignal) {
   await getSharingClient(signal);
   checkCancelled(signal);
-  if (!recoveryClient) {
-    recoveryStorageKey = `recovery-${new URL(authConfig!.supabaseUrl).host}`;
-    const key = recoveryStorageKey;
+  const state = emailClients[kind];
+  if (!state.client) {
+    const key = `${kind}-${new URL(authConfig!.supabaseUrl).host}`;
+    state.key = key;
     const indexKey = `${key}-stored-keys`;
     const storage = {
-      getItem: (name: string) => name === key ? Promise.resolve(recoverySession) : sessionStorage.getItem(name),
+      getItem: (name: string) => name === key ? Promise.resolve(state.session) : sessionStorage.getItem(name),
       async setItem(name: string, value: string) {
-        if (name === key) { recoverySession = value; return; }
+        if (name === key) { state.session = value; return; }
         await serialized(indexKey, async () => {
           const keys = JSON.parse(await sessionStorage.getItem(indexKey) ?? '[]') as string[];
           if (!keys.includes(name)) await sessionStorage.setItem(indexKey, JSON.stringify([...keys, name]));
@@ -120,31 +122,34 @@ export async function getPasswordRecoveryClient(signal?: AbortSignal) {
         });
       },
       async removeItem(name: string) {
-        if (name === key) recoverySession = null;
+        if (name === key) state.session = null;
         else await sessionStorage.removeItem(name);
       },
     };
-    recoveryClient = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+    state.client = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
       global: { fetch: authFetch },
       auth: { storage, storageKey: key, persistSession: true, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'pkce', lock: processLock },
     });
-    recoveryClient.auth.stopAutoRefresh();
+    state.client.auth.stopAutoRefresh();
   }
-  return recoveryClient;
+  return state.client;
 }
-
-export async function clearPasswordRecoveryStorage() {
-  recoverySession = null;
-  if (!recoveryStorageKey) return;
-  const key = `${recoveryStorageKey}-stored-keys`;
+async function clearEmailStorage(kind: 'recovery' | 'confirmation') {
+  const state = emailClients[kind];
+  state.session = null;
+  if (!state.key) return;
+  const key = `${state.key}-stored-keys`;
   await serialized(key, async () => {
     const keys = JSON.parse(await sessionStorage.getItem(key) ?? '[]') as string[];
     await Promise.all(keys.map(name => sessionStorage.removeItem(name)));
     await sessionStorage.removeItem(key);
   });
-  // Discard the SDK's in-memory session too; it is not used for normal sign-in.
-  recoveryClient = undefined;
+  state.client = undefined;
 }
+export const getPasswordRecoveryClient = (signal?: AbortSignal) => getEmailClient('recovery', signal);
+export const clearPasswordRecoveryStorage = () => clearEmailStorage('recovery');
+export const getEmailConfirmationClient = (signal?: AbortSignal) => getEmailClient('confirmation', signal);
+export const clearEmailConfirmationStorage = () => clearEmailStorage('confirmation');
 
 async function requestWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
   if (options.signal?.aborted) throw new SharingError('The request was cancelled.', 'cancelled');
@@ -231,7 +236,7 @@ export function getSharingClient(signal?: AbortSignal): Promise<SupabaseClient> 
 // Must match an entry in Supabase Auth > URL Configuration > Redirect URLs.
 export const authRedirectUrl = 'peekalo://auth-callback';
 
-export type AuthProviders = { google: boolean | null; email: boolean | null };
+export type AuthProviders = { google: boolean | null; email: boolean | null; apple?: boolean | null };
 
 export async function getAuthProviders(signal?: AbortSignal): Promise<AuthProviders> {
   await getSharingClient(signal);
@@ -240,16 +245,17 @@ export async function getAuthProviders(signal?: AbortSignal): Promise<AuthProvid
     const response = await requestWithTimeout(`${authConfig!.supabaseUrl}/auth/v1/settings`, {
       headers: { apikey: authConfig!.supabaseAnonKey }, cache: 'no-store', signal,
     }, 15_000);
-    if (!response.ok) return { google: null, email: null };
+    if (!response.ok) return { google: null, email: null, apple: null };
     const settings = await response.json() as { external?: Record<string, boolean> };
     checkCancelled(signal);
     return {
+      apple: typeof settings.external?.apple === 'boolean' ? settings.external.apple : null,
       google: typeof settings.external?.google === 'boolean' ? settings.external.google : null,
       email: typeof settings.external?.email === 'boolean' ? settings.external.email : null,
     };
   } catch {
     checkCancelled(signal);
-    return { google: null, email: null };
+    return { google: null, email: null, apple: null };
   }
 }
 
@@ -258,6 +264,7 @@ export async function getAuthProviders(signal?: AbortSignal): Promise<AuthProvid
 let accountAuthQueue: Promise<unknown> = Promise.resolve();
 let accountAuthRevision = 0;
 let googleAttemptActive = false;
+let appleAttemptActive = false;
 type CommitListener = (committing: boolean) => void;
 
 function commitAccountAuth<T>(action: (client: SupabaseClient) => Promise<T>, signal?: AbortSignal, onCommit?: CommitListener, oauthRevision?: number, restoreOnCancel = true): Promise<T> {
@@ -319,7 +326,7 @@ function googleCallbackCode(raw: string, flowId: string) {
 
 /** Returns false when the person closes the Google sheet without signing in. */
 export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitListener): Promise<boolean> {
-  if (googleAttemptActive) throw new SharingError('Google sign-in is already open. Finish or close it before trying again.');
+  if (googleAttemptActive || appleAttemptActive) throw new SharingError('Google sign-in is already open. Finish or close it before trying again.');
   googleAttemptActive = true;
   const revision = ++accountAuthRevision;
   const temporaryStorage = new Map<string, string>();
@@ -380,6 +387,48 @@ export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitLi
     temporaryStorage.clear();
     googleAttemptActive = false;
   }
+}
+
+/** Native Apple exchange stays isolated until the same serialized commit as Google. */
+export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitListener): Promise<boolean> {
+  if (googleAttemptActive || appleAttemptActive) throw new SharingError('Sign-in is already open. Finish or close it before trying again.');
+  appleAttemptActive = true;
+  const revision = ++accountAuthRevision;
+  const current = () => { checkCancelled(signal); if (revision !== accountAuthRevision) throw cancelled(); };
+  let isolated: SupabaseClient | undefined;
+  try {
+    const Apple = await import('expo-apple-authentication');
+    if (!await Apple.isAvailableAsync()) throw new SharingError('Apple sign-in is unavailable on this device.', 'not_configured');
+    const providers = await getAuthProviders(signal);
+    current();
+    if (providers.apple !== true) throw new SharingError(providers.apple === false ? 'Apple sign-in is not configured yet.' : 'Cannot check Apple sign-in right now. Please try again.', 'not_configured');
+    const nonce = Crypto.randomUUID();
+    const state = Crypto.randomUUID();
+    const hashedNonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, nonce);
+    current();
+    const credential = await Apple.signInAsync({ requestedScopes: [Apple.AppleAuthenticationScope.EMAIL], nonce: hashedNonce, state });
+    current();
+    if (!credential.identityToken || credential.state !== state) throw new SharingError('Apple sign-in did not finish. Please try again.');
+    isolated = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+      global: { fetch: (input, init) => authFetch(input, init, signal) },
+      auth: { storageKey: `apple-${Crypto.randomUUID()}`, persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, lock: processLock },
+    });
+    isolated.auth.stopAutoRefresh();
+    const exchanged = await isolated.auth.signInWithIdToken({ provider: 'apple', token: credential.identityToken, nonce });
+    current();
+    const session = exchanged.data.session;
+    if (exchanged.error || !session) throw new SharingError('Apple sign-in did not finish. Please try again.');
+    await commitAccountAuth(async client => {
+      const result = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+      if (result.error || !result.data.session) throw new SharingError('Apple sign-in did not finish. Please try again.');
+    }, signal, onCommit, revision);
+    return true;
+  } catch (error) {
+    current();
+    if ((error as { code?: string })?.code === 'ERR_REQUEST_CANCELED') return false;
+    if (error instanceof SharingError) throw error;
+    throw new SharingError('Apple sign-in did not finish. Please try again.');
+  } finally { isolated?.auth.stopAutoRefresh(); appleAttemptActive = false; }
 }
 
 const errorMessages: Record<string, string> = {
