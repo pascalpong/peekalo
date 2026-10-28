@@ -4,12 +4,12 @@ import android.app.Activity
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Build
-import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import android.view.Window
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -33,6 +33,11 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
   }
 
   private val decor = activity.window.decorView as? ViewGroup ?: error("Activity decor unavailable")
+  private val touchCallback = when (val previous = activity.window.callback) {
+    is CaptureTouchCallback -> previous
+    null -> error("Activity callback unavailable")
+    else -> CaptureTouchCallback(previous).also { activity.window.callback = it }
+  }
   private val hiddenAccessibility = WeakHashMap<View, Int>()
   private val message = TextView(activity)
   private val retry = Button(activity)
@@ -95,11 +100,9 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
     }
     keepAboveContent()
     if (newlyBlocking) {
-      // Cancel an already-held gesture underneath the opaque cover as well as
-      // intercepting new touches. No content or pointer coordinates are logged.
-      val now = SystemClock.uptimeMillis()
-      val cancel = MotionEvent.obtain(now, now, MotionEvent.ACTION_CANCEL, 0f, 0f, 0)
-      try { decor.dispatchTouchEvent(cancel) } finally { cancel.recycle() }
+      // Use the real stream's downTime/pointers. RN's cancellation lookup is
+      // keyed by downTime; a fabricated event would leave JS without its CANCEL.
+      touchCallback.cancelActiveGesture()
     }
     requestFocus()
   }
@@ -127,5 +130,64 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
     visibility = GONE
     hiddenAccessibility.forEach { (view, previous) -> view.importantForAccessibility = previous }
     hiddenAccessibility.clear()
+  }
+}
+
+
+// The existing Activity callback keeps all normal dispatch/lifecycle behavior.
+// The wrapper has no module/cover reference and lives only with this Window.
+// CaptureCover reuse (including JS reloads) reuses this wrapper, not another layer.
+private class CaptureTouchCallback(
+  private val delegate: Window.Callback
+) : Window.Callback by delegate {
+  private val stream = ActiveTouchStream<MotionEvent>({ MotionEvent.obtain(it) }, { it.recycle() })
+
+  override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+    try {
+      when (event.actionMasked) {
+        MotionEvent.ACTION_DOWN -> stream.start(event.downTime, event)
+        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> stream.clear()
+        MotionEvent.ACTION_MOVE, MotionEvent.ACTION_POINTER_DOWN -> stream.update(event.downTime, event)
+        MotionEvent.ACTION_POINTER_UP -> {
+          // Exclude the lifted pointer using public SDK APIs; preserve the
+          // actual downTime, source/device and all surviving pointer data.
+          val count = event.pointerCount - 1
+          if (count <= 0) stream.clear()
+          else {
+            val properties = Array(count) { MotionEvent.PointerProperties() }
+            val coordinates = Array(count) { MotionEvent.PointerCoords() }
+            var target = 0
+            for (index in 0 until event.pointerCount) {
+              if (index == event.actionIndex) continue
+              event.getPointerProperties(index, properties[target])
+              event.getPointerCoords(index, coordinates[target])
+              target++
+            }
+            val remaining = MotionEvent.obtain(
+              event.downTime, event.eventTime, MotionEvent.ACTION_MOVE, count,
+              properties, coordinates, event.metaState, event.buttonState,
+              event.xPrecision, event.yPrecision, event.deviceId, event.edgeFlags,
+              event.source, event.flags
+            )
+            try { stream.update(event.downTime, remaining) } finally { remaining.recycle() }
+          }
+        }
+      }
+    } catch (_: Throwable) {
+      stream.clear() // Tracking must never break ordinary Activity input.
+    }
+    return delegate.dispatchTouchEvent(event)
+  }
+
+  fun cancelActiveGesture() {
+    val cancel = stream.takeForCancel() ?: return
+    try {
+      cancel.action = MotionEvent.ACTION_CANCEL
+      // Dispatch at the same callback layer that observed DOWN, preserving any
+      // outer callback's coordinate transformation and avoiding a duplicate one.
+      delegate.dispatchTouchEvent(cancel)
+    } finally {
+      cancel.recycle()
+    }
   }
 }
