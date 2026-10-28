@@ -29,13 +29,13 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     return permission;
   };
   const jsx = (type, props, key) => ({ type, props, key });
-  let cursor = 0, component, tree, mounted = true, scheduled = false, native = null, routeFocused = true;
+  let cursor = 0, component, tree, mounted = true, scheduled = false, native = null, routeFocused = true, renderPaused = false;
   let cameraMounts = 0, cameraUnmounts = 0, stops = 0, micRequests = 0;
   const same = (a, b) => a?.length === b?.length && a.every((value, i) => Object.is(value, b[i]));
   const schedule = () => {
     if (!mounted || scheduled) return;
     scheduled = true;
-    queueMicrotask(() => { scheduled = false; if (mounted) render(); });
+    queueMicrotask(() => { scheduled = false; if (mounted && !renderPaused) render(); });
   };
   const useEffect = (fn, deps) => {
     const index = cursor++, previous = hooks[index];
@@ -89,7 +89,7 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     '@expo/vector-icons/Feather': { default: 'Feather' },
     'expo-camera': { CameraView: 'CameraView', useCameraPermissions: () => [cameraPermission, getPermission, getPermission], Camera: {
       getMicrophonePermissionsAsync: async () => microphone,
-      requestMicrophonePermissionsAsync: async () => { micRequests++; return permissionResult; },
+      requestMicrophonePermissionsAsync: async () => { micRequests++; Object.assign(microphone, permissionResult); return permissionResult; },
     } },
     'expo-device': { isDevice: true },
     'expo-file-system': { File: class { constructor(uri) { this.uri = uri; } exists = true; delete() { deleted.push(this.uri); } } },
@@ -134,6 +134,8 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
     mounts: () => cameraMounts, unmounts: () => cameraUnmounts, stops: () => stops, micRequests: () => micRequests,
     permissionChecks: () => permissionChecks,
+    pauseRendering() { renderPaused = true; },
+    commitRendering() { renderPaused = false; render(); },
     deferPermission() { permissionWait = deferred(); return permissionWait; },
     event(name, value) { for (const listener of appListeners.get(name) ?? []) listener(value); },
     app(state) { AppState.currentState = state; this.event('change', state); },
@@ -370,4 +372,37 @@ test('a retried permission refresh cannot restore capture after another interrup
   retry.resolve({ granted: true, canAskAgain: true }); await flush();
   assert.equal(h.mode(), undefined); assert.equal(h.shutter().disabled, true);
   assert.equal(h.photos.length, 0); assert.equal(h.records.length, 0);
+});
+
+test('batched blur and permission-restored focus recreate the camera and reject the old readiness callback', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush();
+  const oldReady = h.readyCallback();
+  const oldShutter = h.shutter();
+  h.pauseRendering(); h.event('blur'); h.event('focus'); await flush();
+  assert.equal(h.mounts(), 1, 'React has not committed the intermediate hidden camera');
+  oldReady(); await flush();
+  oldShutter.onPress(); oldShutter.onLongPress(); await flush();
+  assert.equal(h.photos.length, 0, 'Queued old capture handlers cannot use a pre-recovery native instance');
+  h.commitRendering(); await flush();
+  assert.equal(h.mounts(), 2, 'A batched hidden-to-visible transition still needs a fresh native ready event');
+  assert.equal(h.unmounts(), 1); assert.equal(h.shutter().disabled, true);
+  oldReady(); await flush(); assert.equal(h.shutter().disabled, true, 'Old native readiness must not enable the recovered camera');
+  h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+  oldShutter.onPress(); oldShutter.onLongPress(); await flush();
+  assert.equal(h.records.length, 0); assert.equal(h.photos.length, 0);
+});
+
+test('microphone permission recovery remains usable when blur/focus rendering is batched', async t => {
+  const h = harness(t, { microphone: { granted: false, canAskAgain: true } });
+  await flush(); h.ready(); await flush(); h.hold(); await flush();
+  assert.equal(h.micRequests(), 1); assert.equal(h.records.length, 0);
+  h.pauseRendering(); h.event('blur'); h.event('focus'); await flush(); h.commitRendering(); await flush();
+  assert.equal(h.mounts(), 2); assert.equal(h.shutter().disabled, true);
+  h.ready(); await flush(); assert.equal(h.shutter().disabled, false);
+  h.hold(); await flush(); assert.equal(h.mode(), 'video');
+  assert.equal(h.mounts(), 2, 'Uninterrupted mode changes retain the recovered native camera');
+  h.ready(); await flush(); assert.equal(h.records.length, 1);
+  h.release(); h.records[0].resolve({ uri: 'file:///fixture/permission-recovered.mp4' }); await flush();
+  assert.equal(h.review(), 'file:///fixture/permission-recovered.mp4');
+  h.press('Discard'); await flush(); assert.deepEqual(h.deleted, ['file:///fixture/permission-recovered.mp4']);
 });

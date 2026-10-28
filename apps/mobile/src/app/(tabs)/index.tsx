@@ -30,6 +30,8 @@ export default function CameraScreen() {
   const windowUsable = useRef(true);
   const windowRevision = useRef(0);
   const [ready, setReady] = useState(false);
+  const [recoveryEpoch, setRecoveryEpoch] = useState(0);
+  const latestRecoveryEpoch = useRef(0);
   const [facing, setFacing] = useState<CameraType>('back');
   const [cameraFailed, setCameraFailed] = useState(false);
   const [permissionFailed, setPermissionFailed] = useState(false);
@@ -120,7 +122,7 @@ export default function CameraScreen() {
   const videoBusy = video.status === 'preparing' || video.status === 'recording' || video.status === 'stopping';
   const capturing = snapshot.status === 'capturing';
   const showCamera = physicalPhone && permission?.granted && focused && active && windowFocused && !cameraFailed && !reviewing && !sharing;
-  const viewIdentity = useMemo(() => ({}), [showCamera, mode, facing]);
+  const viewIdentity = useMemo(() => ({}), [showCamera, mode, facing, recoveryEpoch]);
   const latestViewIdentity = useRef(viewIdentity);
   latestViewIdentity.current = viewIdentity;
   const canCapture = showCamera && ready && !capturing && !videoBusy && mode === 'picture';
@@ -182,6 +184,9 @@ export default function CameraScreen() {
         if (!alive || revision !== windowRevision.current || !routeFocused.current || !nativeWindowFocused.current || AppState.currentState !== 'active') return;
         setPermissionFailed(false);
         windowUsable.current = true;
+        // Blur/focus state updates can batch without removing the old view.
+        // Recovery needs a fresh native ready event even in that single commit.
+        setRecoveryEpoch(++latestRecoveryEpoch.current);
         setWindowFocused(true);
       }).catch(() => { if (alive && revision === windowRevision.current) setPermissionFailed(true); });
     };
@@ -230,7 +235,7 @@ export default function CameraScreen() {
     try { await Linking.openSettings(); } catch { setPermissionFailed(true); }
   };
   const takePhoto = () => {
-    if (!canCapture || !routeFocused.current || !windowUsable.current || !camera.current) return;
+    if (!canCapture || recoveryEpoch !== latestRecoveryEpoch.current || !routeFocused.current || !windowUsable.current || !camera.current) return;
     const currentCamera = camera.current;
     setVideoHint(null);
     void session.capture(async () => {
@@ -243,12 +248,13 @@ export default function CameraScreen() {
   return <View style={styles.screen}>
     {focused && <StatusBar style="light" />}
     <View style={[styles.frame, frame]}>
-      {/* Expo rebinds mode/facing on this native view. Remounting it here lets the
-          old Android view's global unbindAll() tear down the new recording. */}
-      {showCamera && <CameraView ref={camera} style={styles.preview} facing={facing}
+      {/* Only lifecycle recovery recreates the view. Expo rebinds mode/facing on
+          the same native instance; keying those changes can let old Android
+          unbindAll() cleanup tear down the new recording. */}
+      {showCamera && <CameraView key={recoveryEpoch} ref={camera} style={styles.preview} facing={facing}
         mirror={facing === 'front'} mode={mode} ratio="16:9" videoQuality="1080p" mute={false}
         onCameraReady={() => {
-          if (latestViewIdentity.current !== viewIdentity || !showCamera || !routeFocused.current || !windowUsable.current) return;
+          if (latestViewIdentity.current !== viewIdentity || recoveryEpoch !== latestRecoveryEpoch.current || !showCamera || !routeFocused.current || !windowUsable.current) return;
           setReady(true);
           if (mode === 'video' && pendingReady.current) {
             const pending = pendingReady.current;
@@ -258,7 +264,7 @@ export default function CameraScreen() {
           }
         }}
         onMountError={() => {
-          if (latestViewIdentity.current !== viewIdentity || !showCamera || !routeFocused.current || !windowUsable.current) return;
+          if (latestViewIdentity.current !== viewIdentity || recoveryEpoch !== latestRecoveryEpoch.current || !showCamera || !routeFocused.current || !windowUsable.current) return;
           setReady(false); setCameraFailed(true); interrupt();
         }} />}
       {reviewing && active && focused && windowFocused && !sharing && snapshot.photo && <Image source={{ uri: snapshot.photo.uri }}
@@ -313,7 +319,7 @@ export default function CameraScreen() {
             disabled={!showCamera || capturing || (!ready && !videoBusy)} delayLongPress={300}
             onPressIn={() => { longPress.current = false; }}
             onLongPress={() => {
-              if (!canCapture || !routeFocused.current || !windowUsable.current) return;
+              if (!canCapture || recoveryEpoch !== latestRecoveryEpoch.current || !routeFocused.current || !windowUsable.current) return;
               longPress.current = true;
               setElapsed(0);
               void videoSession.start();
