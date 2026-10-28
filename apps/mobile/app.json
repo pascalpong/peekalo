@@ -33,6 +33,7 @@
       "expo-router",
       "expo-font",
       "./plugins/withQuotedBundleScript.cjs",
+      "./plugins/withAndroidSecureWindow.cjs",
       [
         "expo-camera",
         {
