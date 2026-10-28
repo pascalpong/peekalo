@@ -45,11 +45,14 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 const text = value => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
-function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true } = {}) {
+function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true, captureStatus = 'clear' } = {}) {
   const players = [], playbackEvents = [];
   let videoChild = null;
   let loadedImageSource = null;
   const time = fakeClock(), calls = [], subscribers = new Set(), appListeners = new Map(), hooks = [];
+  const captureListeners = new Set();
+  let captureState = captureStatus;
+  const captureAllowed = () => platform !== 'android' || captureState === 'clear' || captureState === 'unsupported';
   let session = signedIn ? { user: { id: 'account-a' }, access_token: 'fixture-token-a' } : null;
   let cursor = 0, tree, component, mounted = true, focused = true, renderPending = false;
   const pendingEffects = new Map();
@@ -189,6 +192,10 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
         return request ? request(entry, calls.length, { time, grant }) : grant();
       },
     },
+    '../lib/capture-guard': {
+      captureGuard: { subscribe(listener) { captureListeners.add(listener); return () => captureListeners.delete(listener); } },
+      captureGuardAllowsReveal: captureAllowed,
+    },
     './ui': { colors: {}, tokens: { font: { display: 'fixture-font' } } },
   };
   class ClientDate extends Date { static now() { return epoch + time.now() + skew; } }
@@ -206,6 +213,8 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
   t.after(unmount);
   return {
     time, calls, grant, ready: flush, unmount, unfocus, refocus, players, playbackEvents,
+    capture(status, notify = true) { captureState = status; if (notify) for (const listener of captureListeners) listener(); },
+    captureListenerCount: () => captureListeners.size,
     press() { const card = find(tree, node => Boolean(node.props?.onResponderGrant)); if (card.props.onStartShouldSetResponder()) card.props.onResponderGrant({ nativeEvent: { touches: [{}] } }); },
     release() { find(tree, node => Boolean(node.props?.onResponderRelease)).props.onResponderRelease(); },
     once() { const button = find(tree, node => node.type === 'Pressable' && node.props.onPress); if (!button.props.disabled) button.props.onPress(); },
@@ -626,3 +635,55 @@ for (const interruption of ['blur', 'unfocus', 'account']) {
     await flush(); assert(!h.video());
   });
 }
+
+for (const status of ['pending', 'recording', 'unavailable']) {
+  test(`capture guard ${status} stops active video synchronously before native media release`, async t => {
+    const h = harness(t, { kind: 'video' }); await h.ready(); h.press(); await flush();
+    const player = h.players[0]; assert(player.playing);
+    h.capture(status);
+    assert.equal(player.playing, false, 'Pause must precede React render and native auto-release');
+    await flush(); assert.equal(h.video(), undefined); assert.equal(h.calls[0].signal.aborted, true);
+    const events = h.playbackEvents.map(event => event.name);
+    assert(events.indexOf('pause') < events.indexOf('release'));
+    const count = h.calls.length;
+    h.press(); h.once(); await flush(); assert.equal(h.calls.length, count, 'Blocked input must not consume another lease');
+    h.capture('clear'); await flush(); assert.equal(h.video(), undefined); assert.equal(h.calls.length, count);
+  });
+
+  test(`capture guard ${status} aborts pending grant and rejects late photo readiness`, async t => {
+    const pending = deferred(), h = harness(t, { request: () => pending.promise });
+    await h.ready(); h.press(); await flush(); assert.equal(h.calls.length, 1);
+    h.capture(status); assert.equal(h.calls[0].signal.aborted, true);
+    pending.resolve(h.grant()); await flush(); assert.equal(h.image(), undefined);
+    h.capture('clear'); await flush(); assert.equal(h.image(), undefined); assert.equal(h.calls.length, 1);
+  });
+}
+
+test('recording guard covers an active photo and clears its transport without reopening on clear', async t => {
+  const h = harness(t); await h.ready(); h.press(); await flush(); assert.equal(h.imageVisible(), true);
+  h.capture('recording'); await flush(); assert.equal(h.image(), undefined);
+  h.capture('clear'); await flush(); assert.equal(h.image(), undefined); assert.equal(h.calls.length, 1);
+});
+
+test('synchronous guard reads reject queued start/readiness before subscriber notification', async t => {
+  const h = harness(t, { kind: 'video', videoStatus: 'loading' }); await h.ready();
+  h.capture('recording', false); h.press(); h.once(); await flush(); assert.equal(h.calls.length, 0);
+  h.capture('clear'); h.press(); await flush();
+  const player = h.players[0]; assert(player); assert.equal(player.playing, false);
+  h.capture('recording', false); player.emit('statusChange', { status: 'readyToPlay' }); await flush();
+  assert.equal(player.playing, false, 'Queued native readiness cannot bypass the current guard state');
+  h.capture('recording'); await flush(); assert.equal(h.video(), undefined);
+});
+
+test('initial blocked capture state never requests media and cleanup removes its subscription', async t => {
+  const h = harness(t, { captureStatus: 'unavailable' }); await h.ready();
+  assert.equal(h.captureListenerCount(), 1); h.press(); h.once(); await flush(); assert.equal(h.calls.length, 0);
+  h.unfocus(); assert.equal(h.captureListenerCount(), 0); h.refocus(); await flush(); assert.equal(h.captureListenerCount(), 1);
+  h.unmount(); assert.equal(h.captureListenerCount(), 0);
+});
+
+test('iOS recipient keeps its existing per-view path without Android guard subscriptions', async t => {
+  const h = harness(t, { platform: 'ios', captureStatus: 'pending' }); await h.ready();
+  assert.equal(h.captureListenerCount(), 0); h.press(); await flush(); assert.equal(h.calls.length, 1);
+  assert.equal(h.imageVisible(), true);
+});

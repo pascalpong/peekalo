@@ -6,6 +6,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
+import { captureGuard, captureGuardAllowsReveal } from '../lib/capture-guard';
 
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string };
 type Reveal = { uri: string; authorization: string; deadline: number; remainingMs: number };
@@ -128,6 +129,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     let authRevision = 0;
     let unsubscribe: (() => void) | undefined;
     const setup = new AbortController();
+    const unsubscribeCapture = Platform.OS === 'android' ? captureGuard.subscribe(() => {
+      if (!captureGuardAllowsReveal()) stop();
+    }) : undefined;
     const key = `received-${newIdempotencyKey()}`;
     let released = false;
     const releaseProtection = () => {
@@ -176,6 +180,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       alive = false;
       setup.abort();
       unsubscribe?.();
+      unsubscribeCapture?.();
       stop();
       identity.current = null;
       if (mounted.current) setProtectedScreen(false);
@@ -185,7 +190,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   }, [stop]));
 
   const start = async (duration?: number) => {
-    if (!protectedScreen || held.current || AppState.currentState !== 'active') return;
+    if (!protectedScreen || !captureGuardAllowsReveal() || held.current || AppState.currentState !== 'active') return;
     held.current = true;
     const current = ++epoch.current;
     const viewer = identity.current;
@@ -193,7 +198,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     setMessage('Opening your moment…');
     const controller = new AbortController();
     abort.current = controller;
-    const valid = () => mounted.current && held.current && epoch.current === current && identity.current === viewer && !controller.signal.aborted && AppState.currentState === 'active';
+    const valid = () => mounted.current && captureGuardAllowsReveal() && held.current && epoch.current === current && identity.current === viewer && !controller.signal.aborted && AppState.currentState === 'active';
     let pending = false;
     let source: MediaSource | null = null;
     // Bound loading failures to four prepaid seconds; never refund server time.
@@ -290,9 +295,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   }, [pauseVideo, reveal]);
 
   const canPlay = useCallback(() => Boolean(mediaSource && mediaSource.turn === epoch.current && held.current && ready.current &&
-    AppState.currentState === 'active' && activeLease.current && activeLease.current.deadline > performance.now()), [mediaSource]);
+    captureGuardAllowsReveal() && AppState.currentState === 'active' && activeLease.current && activeLease.current.deadline > performance.now()), [mediaSource]);
   const mediaReadyChanged = useCallback((value: boolean) => {
-    if (!mediaSource || mediaSource.turn !== epoch.current || !held.current || AppState.currentState !== 'active') return;
+    if (!mediaSource || mediaSource.turn !== epoch.current || !held.current || !captureGuardAllowsReveal() || AppState.currentState !== 'active') return;
     ready.current = value;
     setMediaReady(value);
     const visible = value && activeLease.current && activeLease.current.deadline > performance.now();
