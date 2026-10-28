@@ -247,7 +247,7 @@ export default function CameraScreen() {
 
   return <View style={styles.screen}>
     {focused && <StatusBar style="light" />}
-    <View style={[styles.frame, frame]}>
+    <View pointerEvents={reviewing ? 'auto' : 'none'} style={[styles.frame, frame]}>
       {/* Only lifecycle recovery recreates the view. Expo rebinds mode/facing on
           the same native instance; keying those changes can let old Android
           unbindAll() cleanup tear down the new recording. */}
@@ -358,7 +358,7 @@ const styles = StyleSheet.create({
   cameraGlyph: { height: 76, width: 76, borderRadius: 38, backgroundColor: '#FFFFFF12', alignItems: 'center', justifyContent: 'center' },
   stateTitle: { fontSize: 22, fontFamily: tokens.font.display, color: colors.text, textAlign: 'center' },
   stateText: { fontSize: 14, lineHeight: 22, color: colors.muted, textAlign: 'center', maxWidth: 280 },
-  captureControls: { position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 15 },
+  captureControls: { zIndex: 3, position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 15 },
   photoMode: { color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 2, backgroundColor: '#00000066', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14 },
   shutterRow: { width: '100%', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 36 },
   controlSpacer: { width: 48 },
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
   flipButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#00000066', alignItems: 'center', justifyContent: 'center' },
   reviewBadge: { position: 'absolute', backgroundColor: '#00000066', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7 },
   badgeText: { color: '#fff', fontSize: 9, letterSpacing: 1.1, fontWeight: '700' },
-  reviewControls: { position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 18 },
+  reviewControls: { zIndex: 3, position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 18 },
   reviewHint: { color: '#fff', fontSize: 12, textAlign: 'center', backgroundColor: '#00000099', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
   reviewActions: { flexDirection: 'row', gap: 12 },
   shareButton: { alignSelf: 'stretch', minHeight: 56 },
