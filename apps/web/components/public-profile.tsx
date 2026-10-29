@@ -1,5 +1,6 @@
 import { Icon } from './icons';
 import { Shell } from './shell';
+import { SafetyReport } from './safety-report';
 
 export type PublicProfileData = { username: string; items: { kind: 'photo' | 'video'; createdAt: string }[] };
 
@@ -22,5 +23,6 @@ export function PublicProfile({ profile }: { profile: PublicProfileData }) {
       </article>)}</div> : <p className="profile-bio">No active moments yet.</p>}
       <p className="fixture-caption">These opaque cards contain no photo or video. Ask the owner to send you a moment on Peekalo or share a single-use link.</p>
     </section>
+    <SafetyReport username={profile.username} />
   </main></Shell>;
 }

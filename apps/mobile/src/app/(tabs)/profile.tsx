@@ -4,14 +4,15 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ShareCapture } from '../../components/share-capture';
+import { SafetySettings } from '../../components/safety';
 import { Button, colors, Eyebrow, Eyes, Screen, tokens, typography } from '../../components/ui';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../../lib/sharing-client';
 
-type Account = { state: 'loading' | 'unavailable' | 'signed_out' } | { state: 'signed_in'; email: string | null; username: string | null };
+type Account = { state: 'loading' | 'unavailable' | 'signed_out' } | { state: 'signed_in'; email: string | null; username: string | null; reviewState?: string };
 type Moment = {
-  postId: string; kind: 'photo' | 'video'; status: 'uploading' | 'ready' | 'failed' | 'deleted'; createdAt: string; cleanupPending: boolean;
+  postId: string; kind: 'photo' | 'video'; status: 'uploading' | 'moderation_pending' | 'ready' | 'rejected' | 'taken_down' | 'failed' | 'deleted'; createdAt: string; cleanupPending: boolean;
   link: { state: 'none' | 'active' | 'claimed' | 'expired' | 'revoked'; expiresAt: string } | null;
-  recipients: { username: string; requestState: string; revoked: boolean }[];
+  recipients: { accountId?: string; username: string | null; requestState: string; revoked: boolean }[];
 };
 type Moments = { items: Moment[]; limit: number; activeCount: number; availableSlots: number };
 type LinkDraft = { key: string; url?: string; expiresAt?: number; retired?: boolean };
@@ -69,9 +70,9 @@ export default function ProfileScreen() {
       const id = data.session?.user.id ?? null;
       if (identity.current !== id) { identity.current = id; clearOwner(); }
       if (!data.session) { setAccount({ state: 'signed_out' }); return; }
-      const profile = await apiRequest<{ username: string | null }>('/api/profile', { signal: controller.signal, expectedAccountId: id! });
+      const profile = await apiRequest<{ username: string | null; reviewState?: string }>('/api/profile', { signal: controller.signal, expectedAccountId: id! });
       if (!current()) return;
-      setAccount({ state: 'signed_in', email: data.session.user.email ?? null, username: profile.username });
+      setAccount({ state: 'signed_in', email: data.session.user.email ?? null, username: profile.username, reviewState: profile.reviewState });
       const result = await apiRequest<Moments>('/api/posts', { signal: controller.signal, expectedAccountId: id! });
       if (!current()) return;
       applyInventory(result);
@@ -172,10 +173,10 @@ export default function ProfileScreen() {
       return result.requestState === 'pending' ? `Request sent to @${name}. They must accept before revealing.` : `Shared with @${name}. Their existing viewing allowance stays the same.`;
     });
   }
-  function revokeRecipient(item: Moment, username: string) {
+  function revokeRecipient(item: Moment, person: Moment['recipients'][number]) {
     void mutate(async (signal, _current, owner) => {
-      await apiRequest(`/api/posts/${item.postId}/recipients`, { method: 'DELETE', body: { username }, signal, expectedAccountId: owner });
-      return `Access revoked for @${username}. New viewing requests are blocked.`;
+      await apiRequest(`/api/posts/${item.postId}/recipients`, { method: 'DELETE', body: person.accountId ? { accountId: person.accountId } : { username: person.username }, signal, expectedAccountId: owner });
+      return `Access revoked for ${person.username ? `@${person.username}` : 'this account'}. New viewing requests are blocked.`;
     });
   }
   function deleteMoment(item: Moment) {
@@ -195,6 +196,7 @@ export default function ProfileScreen() {
     });
   }
 
+  const statusLabel = (status: Moment['status']) => status === 'moderation_pending' ? 'Waiting for safety review' : status === 'rejected' ? 'Not approved for sharing' : status === 'taken_down' ? 'Removed by the safety team' : null;
   const signedIn = account.state === 'signed_in';
   const username = signedIn ? account.username : null;
   const title = username ? `@${username}` : signedIn ? 'Almost there.' : 'Hello, you.';
@@ -210,6 +212,8 @@ export default function ProfileScreen() {
       <View style={styles.avatar}>{username ? <Text style={styles.initial}>{username[0].toUpperCase()}</Text> : <Eyes large />}</View>
       <View style={styles.nameBlock}><Text accessibilityRole="header" style={styles.name} numberOfLines={1} adjustsFontSizeToFit>{title}</Text><Text style={typography.small} numberOfLines={2}>{subtitle}</Text></View>
     </View>
+    {signedIn && account.reviewState === 'pending' ? <Text style={typography.small}>Your username is awaiting safety approval. It stays out of public profiles and recipient lookup until approved.</Text> : null}
+    {signedIn && account.reviewState === 'rejected' ? <Text style={typography.small}>Your username was not approved. Open Your account and choose Change username to submit a different name for review.</Text> : null}
     <View style={styles.actions}>
       {account.state !== 'loading' && <Button secondary label={signedIn ? username ? 'Your account' : 'Choose username' : 'Sign in or create account'} icon="user" onPress={() => { if (!operation.current) setPanelOpen(true); }} />}
       <Pressable accessibilityRole="button" accessibilityLabel="Refresh moments" disabled={busy} onPress={() => { void refresh(); }} style={styles.refresh}><Feather name="refresh-cw" size={21} color={colors.text} /></Pressable>
@@ -230,13 +234,13 @@ export default function ProfileScreen() {
         <Text style={typography.small}>A claimed link stays with its first viewer. Revoking prevents future requests; delivered bytes cannot be erased.</Text>
         <Text style={typography.section}>Recipients</Text>
         {selectedMoment.recipients.length === 0 && <Text style={typography.body}>You haven’t sent this moment to anyone yet.</Text>}
-        {selectedMoment.recipients.map(person => <View key={person.username} style={styles.person}>
-          <Text style={typography.body}>@{person.username} · {person.revoked ? 'revoked' : person.requestState}</Text>
-          {!person.revoked && actionButton(`Revoke @${person.username}`, () => revokeRecipient(selectedMoment, person.username))}
+        {selectedMoment.recipients.map(person => <View key={person.accountId ?? person.username} style={styles.person}>
+          <Text style={typography.body}>{person.username ? `@${person.username}` : 'Account awaiting review'} · {person.revoked ? 'revoked' : person.requestState}</Text>
+          {!person.revoked && actionButton(person.username ? `Revoke @${person.username}` : 'Revoke account access', () => revokeRecipient(selectedMoment, person))}
         </View>)}
         <TextInput accessibilityLabel="Recipient username" editable={!busy} style={styles.input} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} placeholder="@username" placeholderTextColor={colors.muted} maxLength={25} />
         {actionButton('Send on Peekalo', () => grantRecipient(selectedMoment))}
-      </> : <Text style={typography.body}>{selectedMoment.status === 'deleted' ? (selectedMoment.cleanupPending ? 'This moment is deleted and its links and recipient access are revoked. Private storage cleanup is still pending. Retry cleanup without restoring the moment.' : 'This moment is deleted and its links and recipient access are revoked.') : selectedMoment.status === 'failed' ? 'The upload failed. Retry from your retained camera draft, or delete this moment and capture again.' : 'This moment is still being prepared. Refresh to check its status.'}</Text>}
+      </> : <Text style={typography.body}>{selectedMoment.status === 'deleted' ? (selectedMoment.cleanupPending ? 'This moment is deleted and its links and recipient access are revoked. Private storage cleanup is still pending. Retry cleanup without restoring the moment.' : 'This moment is deleted and its links and recipient access are revoked.') : statusLabel(selectedMoment.status) ? `${statusLabel(selectedMoment.status)}. Sharing is unavailable. Refresh to check its status or delete the moment.` : selectedMoment.status === 'failed' ? 'The upload failed. Retry from your retained camera draft, or delete this moment and capture again.' : 'This moment is still being prepared. Refresh to check its status.'}</Text>}
       {selectedMoment.status === 'deleted' ? (selectedMoment.cleanupPending ? actionButton('Retry storage cleanup', () => deleteMoment(selectedMoment)) : null) : confirmDelete === selectedMoment.postId ? <View style={styles.confirm}>
         <Text style={typography.section}>Delete this moment?</Text><Text style={typography.body}>This revokes every link and recipient’s access, removes the moment and frees its active slot. Delivered bytes cannot be erased.</Text>
         {actionButton('Delete this moment permanently', () => deleteMoment(selectedMoment), true)}
@@ -245,13 +249,14 @@ export default function ProfileScreen() {
     </View> : <>
       {moments?.items.map((item, index) => <Pressable key={item.postId} accessibilityRole="button" accessibilityLabel={item.status === 'deleted' ? `Manage cleanup for deleted ${item.kind} moment ${index + 1}` : `Manage ${item.kind} moment ${index + 1}`} disabled={busy} style={styles.moment} onPress={() => { setSelected(item.postId); setConfirmDelete(null); setError(''); setNotice(''); }}>
         <View style={styles.tile}><Feather name="eye-off" size={25} color={colors.muted} /></View>
-        <View style={styles.momentCopy}><Text style={typography.section}>{item.kind === 'video' ? 'Video' : 'Photo'} moment</Text><Text style={typography.small}>{item.status === 'deleted' ? item.cleanupPending ? 'Deleted · storage cleanup pending' : 'Deleted' : item.status === 'ready' ? 'Ready · manage sharing' : item.status === 'failed' ? 'Upload failed' : 'Preparing…'}</Text><Text style={typography.small}>{new Date(item.createdAt).toLocaleString()}</Text></View>
+        <View style={styles.momentCopy}><Text style={typography.section}>{item.kind === 'video' ? 'Video' : 'Photo'} moment</Text><Text style={typography.small}>{item.status === 'deleted' ? item.cleanupPending ? 'Deleted · storage cleanup pending' : 'Deleted' : item.status === 'ready' ? 'Ready · manage sharing' : statusLabel(item.status) ?? (item.status === 'failed' ? 'Upload failed' : 'Preparing…')}</Text><Text style={typography.small}>{new Date(item.createdAt).toLocaleString()}</Text></View>
         <Feather name="chevron-right" size={20} color={colors.text} />
       </Pressable>)}
       {!busy && (!moments || moments.items.length === 0) && !error && <View style={styles.empty}><Text style={[typography.body, styles.center]}>{signedIn ? 'Capture a photo or video, then tap Share moment to send it.' : 'Your shared moments will live here once you sign in.'}</Text></View>}
       <Button label="Open camera" icon="camera" onPress={() => router.navigate('/')} />
     </>}
     <View style={styles.limits}><Text style={typography.small}>Up to 3 active moments. Delete one to free a slot. Videos up to {MAX_VIDEO_DURATION_MS / 1000}s; recipients get up to {REVEAL_BUDGET_MS / 1000}s total across holds.</Text></View>
+    <SafetySettings key={identity.current ?? 'signed-out'} accountId={signedIn ? identity.current ?? null : null} />
     <Button secondary label="Explore the sample" onPress={() => router.push('/sample')} />
     <ShareCapture visible={panelOpen} capture={null} onClose={() => { setPanelOpen(false); void refresh(); }} />
   </Screen>;

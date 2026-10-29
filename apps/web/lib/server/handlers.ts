@@ -10,17 +10,15 @@ export const config = endpoint(async request => {
 });
 export const getProfile = endpoint(async request => {
   const id = await account(request);
-  const { data, error } = await database().from('peekalo_profiles').select('username').eq('id', id).maybeSingle();
+  const { data, error } = await database().from('peekalo_profiles').select('username,review_state').eq('id', id).maybeSingle();
   if (error) throw new ApiError(503, 'sharing_unavailable');
-  return response({ username: data?.username ?? null }, request);
+  return response({ username: data?.username ?? null, reviewState: data?.review_state ?? null }, request);
 });
 export const saveProfile = endpoint(async request => {
   const id = await account(request); const input = await body(request);
   if (typeof input.username !== 'string' || !/^[a-z0-9_]{3,24}$/.test(input.username)) throw new ApiError(400, 'invalid_username');
   if (input.username === 'demo') throw new ApiError(409, 'username_reserved');
-  const { error } = await database().from('peekalo_profiles').upsert({ id, username: input.username }, { onConflict: 'id' });
-  if (error) throw new ApiError(error.code === '23505' ? 409 : 503, error.code === '23505' ? 'username_taken' : 'sharing_unavailable');
-  return response({ username: input.username }, request);
+  return response(await rpc('peekalo_save_profile', { p_actor: id, p_username: input.username }), request);
 });
 export const upload = endpoint(async request => {
   const owner = await account(request); const key = uuid(request.headers.get('idempotency-key'));
@@ -38,6 +36,8 @@ export const upload = endpoint(async request => {
     if (!file.size || file.size > (kind === 'photo' ? 15 : 30) * 1024 * 1024) throw new ApiError(413, 'file_too_large');
     const post = await rpc<{ id: string; status: string; reserved: boolean; upload_attempt?: string }>('peekalo_reserve_post', { p_owner: owner, p_key: key, p_kind: kind, p_limit: ACTIVE_MEDIA_LIMIT });
     if (post.status === 'ready') return response({ postId: post.id, kind, status: 'ready' }, request);
+    if (post.status === 'moderation_pending') return response({ postId: post.id, kind, status: 'moderation_pending' }, request);
+    if (post.status === 'rejected' || post.status === 'taken_down') throw new ApiError(403, post.status);
     if (!post.reserved) throw new ApiError(409, 'upload_in_progress');
     // A pre-migration gateway fails closed instead of writing an unfenced object.
     if (!post.upload_attempt) throw new ApiError(503, 'sharing_unavailable');
@@ -54,7 +54,7 @@ export const upload = endpoint(async request => {
       const finished = await rpc<boolean>('peekalo_finish_upload', { p_owner: owner, p_post: post.id, p_attempt: attempt, p_path: storagePath });
       if (!finished) { publicationRejected = true; throw new ApiError(409, 'conflict'); }
       privateMediaCache.put(storagePath, kind, processed.bytes);
-      return response({ postId: post.id, kind, status: 'ready' }, request);
+      return response({ postId: post.id, kind, status: 'moderation_pending' }, request);
     } catch (error) {
       let failed = false;
       try { failed = await rpc<boolean>('peekalo_fail_upload', { p_owner: owner, p_post: post.id, p_attempt: attempt }); }
@@ -87,15 +87,16 @@ export const createLink = (postId: string) => endpoint(async request => {
 export const recipient = (postId: string) => endpoint(async request => {
   const owner = await account(request); const input = await body(request);
   if (typeof input.username !== 'string' || !/^[a-z0-9_]{3,24}$/.test(input.username)) throw new ApiError(400, 'invalid_username');
-  const state = await rpc<string>('peekalo_grant', { p_owner: owner, p_post: uuid(postId), p_username: input.username });
-  return response({ requestState: state }, request);
+  const result = await rpc<{ requestState: string; accountId: string }>('peekalo_grant_target', { p_owner: owner, p_post: uuid(postId), p_username: input.username });
+  return response(result, request);
 });
 export const ownPosts = endpoint(async request => {
   return response(await rpc('peekalo_own_posts', { p_owner: await account(request) }), request);
 });
 export const publicProfile = (username: string) => endpoint(async request => {
   if (username === 'demo' || !/^[a-z0-9_]{3,24}$/.test(username)) throw new ApiError(404, 'unavailable');
-  return response(await rpc('peekalo_public_profile', { p_username: username }), request);
+  const viewer = request.headers.has('authorization') ? await account(request) : null;
+  return response(await rpc('peekalo_public_profile', { p_username: username, p_viewer: viewer }), request);
 });
 export const deletePost = (postId: string) => endpoint(async request => {
   const owner = await account(request); const post = uuid(postId);
@@ -138,7 +139,8 @@ export const accept = (postId: string) => endpoint(async request => {
 });
 export const preview = endpoint(async request => {
   const input = await body(request);
-  return response(await rpc('peekalo_preview', { p_hash: tokenHash(input.token) }), request);
+  const identity = request.headers.has('authorization') ? `a:${await account(request)}` : null;
+  return response(await rpc('peekalo_preview', { p_hash: tokenHash(input.token), p_identity: identity }), request);
 });
 export const lease = (direct = false) => endpoint(async request => {
   const input = await body(request);
@@ -205,6 +207,11 @@ export const media = (leaseId: string) => endpoint(async request => {
 export const revoke = (postId: string, direct = false) => endpoint(async request => {
   const owner = await account(request);
   const input = direct ? await body(request) : {};
+  if (direct && input.accountId !== undefined) {
+    if (input.username !== undefined) throw new ApiError(400, 'invalid_request');
+    await rpc('peekalo_revoke_recipient', { p_owner: owner, p_post: uuid(postId), p_recipient: uuid(input.accountId) });
+    return response({ revoked: true }, request);
+  }
   if (direct && (typeof input.username !== 'string' || !/^[a-z0-9_]{3,24}$/.test(input.username))) throw new ApiError(400, 'invalid_username');
   await rpc('peekalo_revoke', { p_owner: owner, p_post: uuid(postId), p_username: direct ? input.username : null });
   return response({ revoked: true }, request);

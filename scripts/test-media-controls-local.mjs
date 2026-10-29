@@ -3,6 +3,7 @@
  * account IDs created by this invocation, including their object prefixes.
  */
 import assert from 'node:assert/strict';
+import { fixtureOperator } from './safety-fixture-operator.mjs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
@@ -15,6 +16,7 @@ const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_R
 const users = [], clients = [];
 const prefix = `rel02_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
 let passed = 0, failed = false;
+let operatorToken;
 const check = (condition, label) => { assert(condition, label); passed++; };
 async function api(route, { token, method = 'POST', value, form, cookie, key } = {}) {
   const response = await fetch(`${base}${route}`, { method, headers: {
@@ -33,6 +35,8 @@ async function user(suffix) {
   check(!login.error && login.data.session, 'Generated local user signs in');
   const result = { id: data.user.id, token: login.data.session.access_token, username: `${prefix}_${suffix}` };
   check((await api('/api/profile', { token: result.token, value: { username: result.username } })).status === 200, 'Generated username saved');
+  const approval = await api('/api/operator/profile', { token: operatorToken, value: { username: result.username, action: 'approve', reason: 'Generated local fixture name reviewed' } });
+  check(approval.status === 200, 'Generated fixture profile approved');
   return result;
 }
 async function objects(owner) {
@@ -49,6 +53,7 @@ async function objects(owner) {
   await visit(owner, 0); return result;
 }
 try {
+  operatorToken = await fixtureOperator(db, users, prefix);
   const owner = await user('o'), viewer = await user('v');
   check((await api('/api/posts', { method: 'GET' })).status === 401, 'Owner listing requires sign-in');
   check((await api('/api/profile', { token: viewer.token, value: { username: 'demo' } })).data.error === 'username_reserved', 'Sample route username is reserved');
@@ -57,7 +62,9 @@ try {
   const keys = [randomUUID(), randomUUID(), randomUUID()]; const posts = [];
   for (const key of keys) {
     const result = await api('/api/posts', { token: owner.token, form: form(), key });
-    check(result.status === 200 && result.data.status === 'ready', 'Generated capture processed privately'); posts.push(result.data.postId);
+    check(result.status === 200 && result.data.status === 'moderation_pending', 'Generated capture processed privately pending review');
+    check((await api('/api/operator/decision', { token: operatorToken, value: { postId: result.data.postId, action: 'approve', reason: 'Generated local fixture reviewed' } })).status === 200, 'Generated fixture approved');
+    posts.push(result.data.postId);
   }
   const full = await api('/api/posts', { method: 'GET', token: owner.token });
   check(full.status === 200 && full.data.items.length === 3 && full.data.activeCount === 3 && full.data.limit === 3 && full.data.availableSlots === 0, 'Own moments returns authoritative full quota');

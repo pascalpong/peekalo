@@ -5,12 +5,14 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { Button, colors, Eyebrow, Screen, typography } from '../../components/ui';
 import { ShareCapture } from '../../components/share-capture';
 import { ReceivedMoment } from '../../components/received-moment';
+import { SafetyPanel, type SafetyTarget } from '../../components/safety';
 import { apiRequest, getSharingClient } from '../../lib/sharing-client';
 
-type InboxItem = { postId: string; kind: 'photo' | 'video'; senderUsername: string; requestState: 'pending' | 'accepted'; remainingMs?: number | null };
+type InboxItem = { postId: string; kind: 'photo' | 'video'; senderUsername: string | null; senderAccountId?: string; requestState: 'pending' | 'accepted'; remainingMs?: number | null };
 export default function InboxScreen() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [selected, setSelected] = useState<InboxItem | null>(null);
+  const [safety, setSafety] = useState<SafetyTarget | null>(null);
   const [account, setAccount] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -47,7 +49,7 @@ export default function InboxScreen() {
       const accountId = data.session?.user.id ?? null;
       if (identity.current !== accountId) {
         identity.current = accountId;
-        setSelected(null); setItems([]);
+        setSelected(null); setSafety(null); setItems([]);
       }
       setSignedIn(!!accountId);
       if (!accountId) { setItems([]); return; }
@@ -71,7 +73,7 @@ export default function InboxScreen() {
         if (identity.current === accountId) return;
         cancelRequests();
         identity.current = accountId;
-        setSelected(null); setItems([]); setSignedIn(!!accountId); setBusy(false); setError(null);
+        setSelected(null); setSafety(null); setItems([]); setSignedIn(!!accountId); setBusy(false); setError(null);
         // Keep authenticated requests outside Supabase's synchronous auth callback.
         void Promise.resolve().then(() => { if (!controller.signal.aborted) void refresh(); });
       });
@@ -84,7 +86,7 @@ export default function InboxScreen() {
       unsubscribe?.();
       subscribeAuth.current = null;
       cancelRequests();
-      setSelected(null); setItems([]); setBusy(false); setError(null); setAccount(false);
+      setSelected(null); setSafety(null); setItems([]); setBusy(false); setError(null); setAccount(false);
     };
   }, [cancelRequests, refresh]));
   const accept = async (item: InboxItem) => {
@@ -109,12 +111,21 @@ export default function InboxScreen() {
       if (current()) { request.current = null; busyAction.current = null; setBusy(false); }
     }
   };
+  const senderLabel = (item: InboxItem) => item.senderUsername ? `@${item.senderUsername}` : 'Account awaiting review';
+  const openSafety = (item: InboxItem) => {
+    if (!focused.current || busyAction.current || !identity.current) return;
+    // Unmounting ReceivedMoment synchronously ends its reveal and video/audio.
+    setSelected(null); setSafety({ postId: item.postId, username: item.senderUsername, accountId: item.senderAccountId });
+  };
   return <Screen>
     <Eyebrow>For your eyes</Eyebrow>
-    <Text accessibilityRole="header" style={[typography.title, styles.title]}>{selected ? `From @${selected.senderUsername}` : 'Your little\nmoments.'}</Text>
-    {selected ? <>
+    <Text accessibilityRole="header" style={[typography.title, styles.title]}>{selected ? `From ${senderLabel(selected)}` : 'Your little\nmoments.'}</Text>
+    {safety && identity.current ? <SafetyPanel key={`${identity.current}:${safety.postId}`} target={safety} accountId={identity.current} onClose={() => setSafety(null)} onBlocked={() => {
+      setItems(previous => previous.filter(item => safety.accountId ? item.senderAccountId !== safety.accountId : item.senderUsername !== safety.username)); setSafety(null); void refresh();
+    }} /> : selected ? <>
       <Pressable accessibilityRole="button" style={styles.back} onPress={() => setSelected(null)}><Feather name="arrow-left" size={18} color={colors.text} /><Text style={typography.body}>Back to inbox</Text></Pressable>
       <ReceivedMoment key={selected.postId} postId={selected.postId} kind={selected.kind} />
+      <Button secondary label="Report or block" onPress={() => openSafety(selected)} />
     </> : <>
       <Text style={typography.body}>Only moments shared with your account appear here.</Text>
       <View style={styles.actions}>
@@ -129,11 +140,12 @@ export default function InboxScreen() {
       </View>}
       {items.map(item => <View key={item.postId} style={styles.item}>
         <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.text} />
-          <View style={styles.sender}><Text style={typography.section}>@{item.senderUsername}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text></View></View>
+          <View style={styles.sender}><Text style={typography.section}>{senderLabel(item)}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text></View></View>
         <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
           if (!focused.current || busyAction.current || !identity.current) return;
           if (item.requestState === 'pending') void accept(item); else setSelected(item);
         }} />
+        <Button secondary label={`Report or block ${senderLabel(item)}`} onPress={() => openSafety(item)} />
       </View>)}
       <Button label="Back to camera" icon="camera" onPress={() => router.navigate('/')} />
       <Text style={styles.footer}>Sharing requests are connected. Text chat is coming later.</Text>

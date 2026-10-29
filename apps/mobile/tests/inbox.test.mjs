@@ -65,6 +65,7 @@ function harness(t, { bootstrap, getSession } = {}) {
     '../../components/ui': { Button, colors: {}, typography: {}, Eyebrow: 'Eyebrow', Screen: 'Screen' },
     '../../components/share-capture': { ShareCapture },
     '../../components/received-moment': { ReceivedMoment },
+    '../../components/safety': { SafetyPanel: 'SafetyPanel' },
     '../../lib/sharing-client': {
       getSharingClient: () => typeof bootstrap === 'function' ? bootstrap(client) : bootstrap ? bootstrap.promise : Promise.resolve(client),
       apiRequest(path, options = {}) {
@@ -104,6 +105,7 @@ function harness(t, { bootstrap, getSession } = {}) {
       session = accountId ? { user: { id: accountId } } : null;
       for (const callback of listeners) callback(accountId ? 'SIGNED_IN' : 'SIGNED_OUT', session);
     },
+    safety: () => find(tree, node => node.type === 'SafetyPanel'),
     selected: () => find(tree, node => node.type === ReceivedMoment)?.props.postId,
     has: label => Boolean(find(tree, node => node.props?.label === label)),
     error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
@@ -305,4 +307,34 @@ test('manual retry after bootstrap failure still installs identity-change protec
   await flush();
   assert.equal(h.selected(), undefined);
   assert.equal(h.has('Open moment'), false);
+});
+
+
+test('reporting unmounts a selected moment before showing safety actions', async t => {
+  const h = harness(t); await h.load([item('fixture-accepted', 'accepted')]);
+  h.press('Open moment'); assert.equal(h.selected(), 'fixture-accepted');
+  h.press('Report or block');
+  assert.equal(h.selected(), undefined); assert.equal(h.safety().props.target.postId, 'fixture-accepted');
+  assert.equal(h.safety().props.accountId, 'fixture-account-a');
+  h.auth('fixture-account-b'); assert.equal(h.safety(), undefined);
+});
+
+test('block confirmation removes every moment from that sender before refreshing', async t => {
+  const h = harness(t); await h.load([item('fixture-one', 'accepted'), item('fixture-two', 'accepted')]);
+  h.press('Report or block @fixture_sender');
+  h.safety().props.onBlocked();
+  assert.equal(h.safety(), undefined); assert.equal(h.has('Open moment'), false);
+  await flush(); assert.equal(h.requests.at(-1).path, '/api/inbox');
+});
+
+test('Inbox focus loss discards the safety target and private form', async t => {
+  const h = harness(t); await h.load(); h.press('Report or block @fixture_sender');
+  assert(h.safety()); h.blur(); assert.equal(h.safety(), undefined);
+});
+
+
+test('report target pins the sender account id independently of its displayed username', async t => {
+  const h = harness(t); await h.load([{ ...item('fixture-post', 'accepted'), senderAccountId: 'fixture-original-sender' }]);
+  h.press('Report or block @fixture_sender');
+  assert.equal(h.safety().props.target.accountId, 'fixture-original-sender');
 });

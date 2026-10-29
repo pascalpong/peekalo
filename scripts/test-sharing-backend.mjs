@@ -3,6 +3,7 @@
  * Never run against an existing production project. All test objects/users are removed.
  */
 import assert from 'node:assert/strict';
+import { fixtureOperator } from './safety-fixture-operator.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
@@ -19,6 +20,13 @@ const origin = new URL(process.env.PUBLIC_APP_URL ?? base).origin;
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 const namespace = `test_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
 const users = [];
+let operatorToken;
+const operator = async () => operatorToken ??= await fixtureOperator(db, users, namespace);
+async function approveFixture(post) {
+  if (post.data.status !== 'moderation_pending') return;
+  const result = await api('/api/operator/decision', { token: await operator(), value: { postId: post.data.postId, action: 'approve', reason: 'Generated test fixture reviewed' } });
+  check(result.status === 200, 'Generated fixture manually approved by separate test operator');
+}
 const dir = await mkdtemp(path.join(tmpdir(), 'peekalo-test-'));
 let passed = 0;
 const timings = new Map();
@@ -121,12 +129,14 @@ try {
   for (const person of [owner, recipient]) {
     const result = await api('/api/profile', { token: person.token, value: { username: person.username } });
     check(result.status === 200, 'Account profile persisted');
+    if (result.data.reviewState === 'pending') check((await api('/api/operator/profile', { token: await operator(), value: { username: person.username, action: 'approve', reason: 'Generated fixture name reviewed' } })).status === 200, 'Generated profile approved');
   }
   const image = await sharp({ create: { width: 360, height: 640, channels: 3, background: '#b5d278' } }).jpeg().toBuffer();
   const key = randomUUID();
   const uploads = await together([0, 1].map(() => api('/api/posts', { token: owner.token, key, form: form(image, 'photo', 'image/jpeg') })));
   const success = uploads.find(result => result.status === 200);
   check(Boolean(success), 'At least one idempotent concurrent upload succeeds');
+  await approveFixture(success);
   const post = success.data.postId;
   const repeated = await api('/api/posts', { token: owner.token, key, form: form(image, 'photo', 'image/jpeg') });
   check(repeated.status === 200 && repeated.data.postId === post, 'Upload retry returns original post');
@@ -279,6 +289,7 @@ try {
   execFileSync(process.env.FFMPEG_PATH || 'ffmpeg', ['-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0xb5d278:s=180x320:r=15', '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', videoPath], { timeout: 20_000, stdio: 'ignore' });
   const video = await api('/api/posts', { token: owner.token, key: randomUUID(), form: form(await readFile(videoPath), 'video', 'video/mp4') });
   check(video.status === 200 && video.data.kind === 'video', 'Trusted worker normalizes generated short video');
+  await approveFixture(video);
   const videoLink = await api(`/api/posts/${video.data.postId}/link`, { token: owner.token, key: randomUUID() });
   const videoToken = new URL(videoLink.data.url).hash.slice(1);
   const videoSession = randomUUID();

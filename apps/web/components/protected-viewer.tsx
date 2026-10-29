@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullscreenReveal } from "./fullscreen-reveal";
 import { Icon } from "./icons";
+import { SafetyReport } from "./safety-report";
 import styles from "./protected-viewer.module.css";
 
-type Phase = "loading" | "ready" | "requesting" | "revealing" | "hidden" | "exhausted" | "unavailable" | "claimed" | "expired" | "busy" | "error";
+type Phase = "loading" | "ready" | "requesting" | "revealing" | "hidden" | "exhausted" | "unavailable" | "claimed" | "expired" | "busy" | "pending" | "blocked" | "restricted" | "error";
 type ViewerState = { phase: Phase; kind: "photo" | "video"; remainingMs: number | null; mediaUrl: string | null; mediaTurn: number | null; mediaReady: boolean };
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string | number };
 type Controls = { start: (input: string, oneSecond?: boolean) => void; stop: () => void; retry: () => void; ready: (turn: number) => void; failed: (turn: number) => void };
@@ -20,6 +21,9 @@ function statusMessage(phase: Phase) {
     case "unavailable": return "This moment is no longer available. Ask the sender for help.";
     case "claimed": return "This single-use link has already been claimed in another browser. Ask the sender for a new link.";
     case "expired": return "This link has expired. Ask the sender for a new link.";
+    case "pending": return "This moment is awaiting safety review. Sharing is unavailable until it is approved.";
+    case "blocked": return "This moment is unavailable between these accounts. Manage account blocks in the app.";
+    case "restricted": return "Viewing is unavailable for this account. See Support for help.";
     case "busy": return "Another viewing session is active. Try again in a moment.";
     case "error": return "The moment couldn’t load. Check your connection and try again.";
     default: return "Hidden · ready when you are";
@@ -29,6 +33,8 @@ function statusMessage(phase: Phase) {
 /** No clear media is requested until the server grants a deliberate reveal. */
 export function ProtectedViewer() {
   const [state, setState] = useState<ViewerState>(initial);
+  const [reportOpen, setReportOpen] = useState(false);
+  const reportActive = useRef(false);
   const controls = useRef<Controls | null>(null);
   const input = useRef<string | null>(null);
   const video = useRef<HTMLVideoElement | null>(null);
@@ -99,7 +105,7 @@ export function ProtectedViewer() {
         const result: { kind?: string; state?: string; remainingMs?: number; error?: string } = await response.json();
         if (!mounted || turn !== generation) return;
         controller = null;
-        if (!response.ok) { publish({ phase: result.error === "already_claimed" ? "claimed" : result.error === "expired" ? "expired" : [403, 404, 410].includes(response.status) ? "unavailable" : "error" }); return; }
+        if (!response.ok) { publish({ phase: result.error === "moderation_pending" ? "pending" : result.error === "blocked" ? "blocked" : result.error === "suspended" ? "restricted" : result.error === "already_claimed" ? "claimed" : result.error === "expired" ? "expired" : [403, 404, 410].includes(response.status) ? "unavailable" : "error" }); return; }
         if (!(["available", "exhausted"].includes(result.state ?? "")) || (result.kind !== "photo" && result.kind !== "video")) {
           publish({ phase: "error" }); return;
         }
@@ -137,7 +143,7 @@ export function ProtectedViewer() {
             renewal = setTimeout(() => { void requestLease(turn); }, 100);
             return;
           }
-          stop(code.includes("exhaust") ? "exhausted" : code.includes("busy") ? "busy" : response.status === 410 || response.status === 409 || response.status === 404 || response.status === 403 ? "unavailable" : "error");
+          stop(code === "moderation_pending" ? "pending" : code === "blocked" ? "blocked" : code === "suspended" ? "restricted" : code.includes("exhaust") ? "exhausted" : code.includes("busy") ? "busy" : response.status === 410 || response.status === 409 || response.status === 404 || response.status === 403 ? "unavailable" : "error");
           return;
         }
         const mediaUrl = typeof result.mediaUrl === "string" ? new URL(result.mediaUrl, window.location.origin) : null;
@@ -185,7 +191,7 @@ export function ProtectedViewer() {
     };
     controls.current = {
       start: (source, oneSecond = false) => {
-        if (holding || !token || document.visibilityState !== "visible" || !document.hasFocus() || !["ready", "hidden", "busy"].includes(current.phase)) return;
+        if (reportActive.current || holding || !token || document.visibilityState !== "visible" || !document.hasFocus() || !["ready", "hidden", "busy"].includes(current.phase)) return;
         generation++;
         const turn = generation;
         input.current = source;
@@ -234,7 +240,7 @@ export function ProtectedViewer() {
   }, []);
 
   const revealed = state.phase === "revealing" && state.mediaReady && state.mediaUrl !== null;
-  const disabled = ["loading", "exhausted", "unavailable", "claimed", "expired", "error"].includes(state.phase);
+  const disabled = reportOpen || ["loading", "exhausted", "unavailable", "claimed", "expired", "pending", "blocked", "restricted", "error"].includes(state.phase);
   const seconds = state.remainingMs === null ? null : (Math.ceil(state.remainingMs / 100) / 10).toFixed(1);
   const stop = useCallback(() => { controls.current?.stop(); }, []);
 
@@ -261,7 +267,7 @@ export function ProtectedViewer() {
         if (event.key === " " || event.key === "Enter") event.preventDefault();
         if (input.current === `key:${event.key}`) stop();
       }}>
-      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || ["unavailable", "claimed", "expired"].includes(state.phase) ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : ["unavailable", "claimed", "expired"].includes(state.phase) ? state.phase === "claimed" ? "This link is already claimed." : state.phase === "expired" ? "This link has expired." : "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
+      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || ["unavailable", "claimed", "expired", "pending", "blocked", "restricted"].includes(state.phase) ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : ["unavailable", "claimed", "expired", "pending", "blocked", "restricted"].includes(state.phase) ? state.phase === "pending" ? "Awaiting safety review." : state.phase === "claimed" ? "This link is already claimed." : state.phase === "expired" ? "This link has expired." : "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
     </button>
     {state.mediaUrl !== null && <FullscreenReveal seconds={seconds ?? "0.0"} onDismiss={stop} visible={revealed}>
       {state.kind === "photo" && (
@@ -279,6 +285,7 @@ export function ProtectedViewer() {
     <p id="protected-instructions" className={styles.help}>Hold the image, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
     <button type="button" className={styles.accessible} disabled={disabled} aria-busy={state.phase === "requesting"} onClick={() => controls.current?.start("accessible", true)} onBlur={stop}>Reveal for 1 second<Icon name="eye" /></button>
     <p className={styles.help}>Uses the same total allowance. Interrupted prepaid time is used.</p>
+    <SafetyReport link onOpen={() => { reportActive.current = true; controls.current?.stop(); setReportOpen(true); }} onClose={() => { reportActive.current = false; setReportOpen(false); }} />
     {state.phase === "error" && <button type="button" className={styles.retry} onClick={() => controls.current?.retry()}>Try again</button>}
   </section>;
 }

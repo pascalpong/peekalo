@@ -57,9 +57,11 @@ function harness(t) {
   return {
     requests, shares, unmount,
     advance(ms) { now += ms; },
-    async ready() { await flush(); assert.equal(requests.at(-1).path, '/api/profile'); requests.at(-1).resolve({ username: 'fixture_owner' }); await flush(); },
+    async ready(reviewState) { await flush(); assert.equal(requests.at(-1).path, '/api/profile'); requests.at(-1).resolve({ username: 'fixture_owner', reviewState }); await flush(); },
     press(label) { const action = find(tree, node => node.props?.label === label); assert(action, `Missing ${label}`); if (!action.props.disabled) action.props.onPress(); },
     input(value) { find(tree, node => node.props?.accessibilityLabel === 'Recipient username').props.onChangeText(value); },
+    inputUsername(value) { find(tree, node => node.props?.accessibilityLabel === 'Your username').props.onChangeText(value); },
+    text: () => JSON.stringify(tree, (_key, value) => typeof value === 'function' ? undefined : value),
     visible(value) { props = { ...props, visible: value }; render(); },
     account(id) { session = id ? { user: { id } } : null; for (const fn of subscribers) fn(id ? 'SIGNED_IN' : 'SIGNED_OUT', session); },
     error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
@@ -151,4 +153,64 @@ test('each cached share checks current server state and refuses a remotely revok
   h.press('Share link'); await flush(); assert.equal(h.requests.at(-1).headers['Idempotency-Key'], first.headers['Idempotency-Key']);
   h.requests.at(-1).resolve({ url: `https://fixture.invalid/s/view#${'x'.repeat(43)}`, expiresAt: '2099-01-01T00:00:00Z', state: 'revoked' }); await flush();
   assert.equal(h.shares.length, 1); assert.match(h.error(), /revoked/);
+});
+
+
+test('manual approval retains the uploaded moment and waits without issuing a link', async t => {
+  const h = harness(t); await h.ready(); h.press('Create a single-use link'); await flush();
+  const upload = h.requests.at(-1);
+  upload.resolve({ postId: 'fixture-pending', status: 'moderation_pending' }); await flush();
+  assert.equal(h.requests.length, 2); assert(h.error().includes('waiting for safety review'));
+  h.press('Try the same action again'); await flush();
+  assert.equal(h.requests.at(-1).path, '/api/posts'); assert.equal(h.requests.at(-1).method, undefined);
+  h.requests.at(-1).resolve({ items: [{ postId: 'fixture-pending', status: 'moderation_pending' }] }); await flush();
+  assert.equal(h.requests.filter(r => r.method === 'POST' && r.path === '/api/posts').length, 1);
+  assert.equal(h.requests.filter(r => r.path.endsWith('/link')).length, 0);
+  h.press('Try the same action again'); await flush();
+  h.requests.at(-1).resolve({ items: [{ postId: 'fixture-pending', status: 'ready' }] }); await flush();
+  assert.equal(h.requests.at(-1).path, '/api/posts/fixture-pending/link');
+});
+
+for (const status of ['rejected', 'taken_down', 'deleted']) {
+  test(`reviewed ${status} upload cannot create a grant or reupload on retry`, async t => {
+    const h = harness(t); await h.ready(); h.input('fixture_recipient'); await flush(); h.press('Send to recipient'); await flush();
+    h.requests.at(-1).resolve({ postId: 'fixture-pending', status: 'moderation_pending' }); await flush();
+    h.press('Try the same action again'); await flush();
+    h.requests.at(-1).resolve({ items: [{ postId: 'fixture-pending', status }] }); await flush();
+    assert.equal(h.requests.filter(r => r.path.endsWith('/recipients')).length, 0);
+    assert.equal(h.requests.filter(r => r.method === 'POST' && r.path === '/api/posts').length, 1);
+    assert(h.error());
+  });
+}
+
+
+test('rejected username can be replaced while the signed-in account and capture stay available', async t => {
+  const h = harness(t); await h.ready('rejected');
+  assert(h.text().includes('username was not approved'));
+  h.press('Change username'); await flush(); h.inputUsername('fixture_newname'); await flush(); h.press('Save username'); await flush();
+  const saved = h.requests.at(-1); assert.equal(saved.path, '/api/profile'); assert.equal(saved.method, 'POST');
+  assert.equal(saved.body.username, 'fixture_newname'); assert.equal(saved.expectedAccountId, 'fixture-owner');
+  saved.resolve({ username: 'fixture_newname', reviewState: 'pending' }); await flush();
+  assert(h.text().includes('waiting for safety approval')); assert(h.text().includes('Signed in as @'));
+  h.press('Create a single-use link'); await flush();
+  assert.equal(h.requests.at(-1).path, '/api/posts');
+  h.requests.at(-1).resolve({ postId: 'fixture-pending', status: 'moderation_pending' }); await flush();
+  assert.equal(h.requests.filter(request => request.path.endsWith('/link')).length, 0);
+});
+
+test('failed username replacement does not claim approval or discard the name for retry', async t => {
+  const h = harness(t); await h.ready('rejected'); h.press('Change username'); await flush();
+  h.inputUsername('fixture_newname'); await flush(); h.press('Save username'); await flush();
+  h.requests.at(-1).reject(new SharingError('Please sign in again to continue.', 'unauthorized')); await flush();
+  assert.equal(h.error(), 'Please sign in again to continue.');
+  assert.equal(h.text().includes('username is saved and waiting'), false);
+});
+
+
+test('immediate recipient revocation pins the granted account even after its name changes', async t => {
+  const h = harness(t); await h.ready(); h.input('fixture_recipient'); await flush(); h.press('Send to recipient'); await flush();
+  h.requests.at(-1).resolve({ postId: 'fixture-post', status: 'ready' }); await flush();
+  h.requests.at(-1).resolve({ requestState: 'pending', accountId: 'fixture-original-recipient' }); await flush();
+  h.press('Revoke @fixture_recipient access'); await flush();
+  assert.equal(h.requests.at(-1).body.accountId, 'fixture-original-recipient'); assert.equal(h.requests.at(-1).body.username, undefined);
 });

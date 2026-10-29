@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
-import { ApiError, rpc } from '../../../lib/server/sharing';
+import { headers } from 'next/headers';
+import { ApiError, account, configuration, rpc } from '../../../lib/server/sharing';
 import { PublicProfile, type PublicProfileData } from '../../../components/public-profile';
 import { Shell } from '../../../components/shell';
 
@@ -10,7 +11,11 @@ export default async function ProfilePage({ params }: { params: Promise<{ userna
   const { username } = await params;
   if (!/^[a-z0-9_]{3,24}$/.test(username)) notFound();
   let profile: PublicProfileData;
-  try { profile = await rpc<PublicProfileData>('peekalo_public_profile', { p_username: username }); }
+  try {
+    const authorization = (await headers()).get('authorization');
+    const viewer = authorization ? await account(new Request(`${configuration().appUrl}/u/`, { headers: { authorization } })) : null;
+    profile = await rpc<PublicProfileData>('peekalo_public_profile', { p_username: username, p_viewer: viewer });
+  }
   catch (error) {
     if (error instanceof ApiError && error.status === 404) notFound();
     return <Shell><main id="main" className="profile-main"><h1>Profile unavailable</h1><p className="profile-bio">We couldn&apos;t load this profile. Please try again later.</p></main></Shell>;

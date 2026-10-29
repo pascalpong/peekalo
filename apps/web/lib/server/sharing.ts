@@ -93,8 +93,12 @@ export function sameOrigin(request: Request) {
 export async function rpc<T = Record<string, unknown>>(name: string, args: Record<string, unknown>): Promise<T> {
   const { data, error } = await database().rpc(name, args);
   if (error) {
-    const codes: Record<string, [number, string]> = { unavailable: [404, 'unavailable'], recipient: [404, 'recipient_not_found'], claimed: [410, 'already_claimed'], busy: [409, 'viewer_busy'], early: [409, 'renew_later'], exhausted: [410, 'exhausted'], expired: [410, 'expired'], quota: [409, 'active_limit'], conflict: [409, 'conflict'], unauthorized: [401, 'sign_in_required'] };
+    const codes: Record<string, [number, string]> = { unavailable: [404, 'unavailable'], recipient: [404, 'recipient_not_found'], claimed: [410, 'already_claimed'], busy: [409, 'viewer_busy'], early: [409, 'renew_later'], exhausted: [410, 'exhausted'], expired: [410, 'expired'], quota: [409, 'active_limit'], conflict: [409, 'conflict'], unauthorized: [401, 'sign_in_required'], forbidden: [403, 'operator_required'], moderation_pending: [409, 'moderation_pending'], blocked: [403, 'blocked'], rejected: [403, 'rejected'], taken_down: [403, 'taken_down'], rate_limited: [429, 'rate_limited'] };
     const known = codes[error.message];
+    if (error.code === '23505') throw new ApiError(409, 'username_taken');
+    if (error.message === 'username_taken') throw new ApiError(409, 'username_taken');
+    if (error.message === 'username') throw new ApiError(400, 'invalid_username');
+    if (error.message === 'suspended') throw new ApiError(403, 'suspended');
     throw new ApiError(...(known ?? [503, 'sharing_unavailable']));
   }
   return data as T;

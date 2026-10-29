@@ -78,7 +78,7 @@ try {
       assert(Date.parse(post.upload_expires_at) - Date.now() <= 300_000);
       assert.equal(await finish(db, post), true);
       const ready = await reserve(db, id, key);
-      assert.equal(ready.status, 'ready'); assert.equal(ready.reserved, false);
+      assert.equal(ready.status, 'moderation_pending'); assert.equal(ready.reserved, false);
       assert.equal(ready.storage_path, objectPath(post));
       assert.equal(await finish(db, post), true, 'A lost publication reply can replay its exact ready path');
       assert.equal(await finish(db, { ...post, upload_attempt: randomUUID() }), false, 'Another attempt cannot replay the ready publication');
@@ -122,6 +122,10 @@ try {
       const post = await reserve(db, await owner(db)); assert.equal(await fail(db, post), true);
       const retry = await reserve(db, post.owner_id, post.upload_key);
       assert.notEqual(retry.upload_attempt, post.upload_attempt); assert.equal(await finish(db, retry), true);
+      const operator = await owner(db);
+      await db.query('insert into peekalo_operators(account_id) values($1)', [operator]);
+      await db.query("insert into peekalo_profiles(id,username,review_state) values($1,$2,'approved')", [post.owner_id, 'fixture_' + post.owner_id.replaceAll('-', '').slice(0,16)]);
+      await value(db, 'select peekalo_moderate($1,$2,$3,$4) as value', [operator, post.id, 'approve', 'Generated fixture only']);
       const nonce = randomUUID();
       await value(db, 'select peekalo_create_link($1,$2,$3,$4) as value', [post.owner_id, post.id, nonce, `test-only-${randomUUID()}`]);
       await value(db, 'select peekalo_revoke($1,$2) as value', [post.owner_id, post.id]);

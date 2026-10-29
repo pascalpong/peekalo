@@ -50,6 +50,7 @@ function harness(t, { bootstrap, getSession, share } = {}) {
     'expo-router': { router: { navigate() {}, push() {} }, useFocusEffect: callback => { focusCallback = callback; } },
     '../../components/ui': { Button: 'Button', colors: {}, typography: {}, tokens: { font: {}, radius: {}, type: {} }, Eyebrow: 'Eyebrow', Eyes: 'Eyes', Screen: 'Screen' },
     '../../components/share-capture': { ShareCapture: 'ShareCapture' },
+    '../../components/safety': { SafetySettings: 'SafetySettings' },
     '../../lib/sharing-client': {
       SharingError, resolveApiUrl: path => `https://fixture.invalid${path}`, newIdempotencyKey: () => `fixture-key-${++nextKey}`,
       getSharingClient: () => typeof bootstrap === 'function' ? bootstrap(client) : bootstrap ? bootstrap.promise : Promise.resolve(client),
@@ -65,8 +66,8 @@ function harness(t, { bootstrap, getSession, share } = {}) {
   focus(); t.after(unmount);
   return {
     client, requests, shares, focus, blur, unmount,
-    async load(items = [moment()]) {
-      await flush(); assert.equal(requests.at(-1).path, '/api/profile'); requests.at(-1).resolve({ username: 'fixture_owner' });
+    async load(items = [moment()], reviewState) {
+      await flush(); assert.equal(requests.at(-1).path, '/api/profile'); requests.at(-1).resolve({ username: 'fixture_owner', reviewState });
       await flush(); assert.equal(requests.at(-1).path, '/api/posts'); requests.at(-1).resolve(listing(items)); await flush();
     },
     handler(label) { const found = find(tree, node => typeof node.props?.onPress === 'function' && (node.props.label === label || node.props.accessibilityLabel === label || textContent(node.props.children) === label)); assert(found, `Missing ${label}`); return found.props.onPress; },
@@ -304,4 +305,30 @@ test('every deliberate cached-link share revalidates the same key and blocks rem
   assert.equal(h.shares.length, 1); assert.match(h.error(), /revoked/);
   const count = h.requests.length; await flush(); assert.equal(h.requests.length, count, 'No replacement is minted automatically');
   h.press('Share link'); assert.notEqual(h.requests.at(-1).headers['Idempotency-Key'], original.headers['Idempotency-Key']);
+});
+
+
+for (const status of ['moderation_pending', 'rejected', 'taken_down']) {
+  test(`${status} moments expose deletion and status without sharing controls`, async t => {
+    const h = harness(t); await h.load([moment('fixture-safety', { status })]);
+    h.press('Manage photo moment 1');
+    assert.equal(h.has('Create a single-use link'), false); assert.equal(h.has('Send on Peekalo'), false);
+    assert(h.has('Delete moment')); assert(h.text().includes('Sharing is unavailable'));
+    assert.equal(h.requests.length, 2);
+  });
+}
+
+
+test('rejected username is explained while owner deletion controls remain available', async t => {
+  const h = harness(t); await h.load([moment()], 'rejected');
+  assert(h.text().includes('username was not approved')); assert(h.text().includes('Change username'));
+  h.press('Manage photo moment 1'); assert(h.has('Delete moment'));
+});
+
+
+test('unapproved recipient names stay hidden and revocation uses the stable account id', async t => {
+  const h = harness(t); await h.load([moment('fixture-post', { recipients: [{ accountId: 'fixture-recipient-id', username: null, requestState: 'accepted', revoked: false }] })]);
+  h.press('Manage photo moment 1'); assert(h.text().includes('Account awaiting review')); assert.equal(h.text().includes('@null'), false);
+  h.press('Revoke account access');
+  assert.equal(h.requests.at(-1).body.accountId, 'fixture-recipient-id'); assert.equal(h.requests.at(-1).body.username, undefined);
 });

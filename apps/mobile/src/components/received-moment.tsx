@@ -308,7 +308,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
           stop();
           setMessage(error instanceof SharingError ? error.message : 'This moment is unavailable. Try again in a moment.');
           if (error instanceof SharingError && error.code === 'exhausted') { allowanceReady.current = false; setRemaining(0); }
-          else if (error instanceof SharingError && ['unavailable', 'unauthorized', 'account_changed', 'sign_in_required'].includes(error.code)) { allowanceReady.current = false; setRemaining(null); }
+          else if (error instanceof SharingError && ['unavailable', 'suspended', 'blocked', 'moderation_pending', 'rejected', 'taken_down', 'unauthorized', 'account_changed', 'sign_in_required'].includes(error.code)) { allowanceReady.current = false; setRemaining(null); }
         } finally { pending = false; }
       };
       await tick();

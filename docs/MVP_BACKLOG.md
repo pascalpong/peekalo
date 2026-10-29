@@ -110,8 +110,8 @@ Meaningful backend/security checks:
 
 - [ ] MKT-01: publish the prelaunch marketing site after review. Dark landing page, original ten-second cinematic hero, labelled local reveal demo, privacy notice and consent-based waitlist integration are implemented locally in the separate `apps/site` website (D-23); profiles/private viewing remain in `apps/web`. The original marketing work was implemented on 20 October; MKT-02 records that motion evidence. Apply the new waitlist migration, verify a real Supabase HTTP insert/duplicate, connect a working private contact/removal route using branded email after domain choice, update the notice and enable collection only after those checks. Free public hosting is live under HOST-01 with collection closed; remaining signup/contact/storage work still blocks waitlist launch.
 
-- [ ] Filtering/moderation queue, restricted operator access and published contact.
-- [ ] Report post/comment/message/user; responses and takedowns actually work.
+- [ ] Filtering/moderation queue, restricted operator access and published contact. REL-03 is implementing local manual pre-publication moment/username approval, restricted audited review, takedown and account suspension. Actual verification and remaining contact/operator/rollout gates are on the build board.
+- [ ] Report post/comment/message/user; responses and takedowns actually work. REL-03 covers moments/accounts and identified-account blocks; REL-06 must extend authorized report targets and bilateral block enforcement to durable comments/chat.
 - [ ] Terms acceptance, privacy/terms/support pages, age and country decisions.
 - [ ] In-app deletion and external deletion request route; cleanup and retention policy.
 - [ ] App Privacy/Data safety disclosures match the app and installed SDKs.

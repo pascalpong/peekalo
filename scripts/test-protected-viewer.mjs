@@ -101,6 +101,7 @@ function harness(t, { lease, skew = 0, kind = 'photo', status } = {}) {
     'react/jsx-runtime': { jsx, jsxs: jsx },
     './fullscreen-reveal': { FullscreenReveal: Overlay },
     './icons': { Icon: () => {} },
+    './safety-report': { SafetyReport: () => {} },
     './protected-viewer.module.css': { default: {} },
   };
   class ClientDate extends Date { static now() { return serverEpoch + time.now() + skew; } }
@@ -139,6 +140,8 @@ function harness(t, { lease, skew = 0, kind = 'photo', status } = {}) {
   return {
     time, requests, snapshots, granted, unmount,
     ready: flush,
+    reportOpen() { walk(tree, node => node.props?.link === true && typeof node.props.onOpen === 'function').props.onOpen(); },
+    reportClose() { walk(tree, node => node.props?.link === true && typeof node.props.onClose === 'function').props.onClose(); },
     down() { surface().props.onPointerDown(pointer); },
     release() { surface().props.onPointerUp(pointer); },
     blur() { window.dispatchEvent(new globalThis.Event('blur')); },
@@ -488,4 +491,41 @@ for (const [error, phase] of [['already_claimed', 'claimed'], ['expired', 'expir
   await h.ready(); h.down(); await flush();
   assert.equal(h.snapshots.at(-1).phase, phase); assert.equal(h.leaseRequests().length, 0);
   assert.match(h.status(), /Ask the sender for a new link/);
+});
+
+
+test('opening a safety report aborts reveal work and prevents spending until the report closes', async t => {
+  const pending = deferred();
+  const h = harness(t, { lease: () => pending.promise });
+  await h.ready(); h.down(); await flush();
+  const request = h.leaseRequests()[0];
+  h.reportOpen();
+  assert(request.signal.aborted);
+  pending.resolve(globalThis.Response.json(h.granted()));
+  await flush();
+  assert(!h.overlay()); assert(!h.image());
+  h.down(); h.once(); await flush();
+  assert.equal(h.leaseRequests().length, 1, 'Report controls cannot silently reveal or consume another slice');
+  h.reportClose(); h.down(); await flush();
+  assert.equal(h.leaseRequests().length, 2);
+});
+
+test('opening a safety report pauses and removes an active video before showing the form', async t => {
+  const h = harness(t, { kind: 'video' });
+  let pauses = 0, cleared = 0;
+  const player = { currentTime: 1, play: async () => {}, pause() { pauses++; }, removeAttribute(name) { if (name === 'src') cleared++; }, load() {} };
+  await h.ready(); h.down(); await flush();
+  h.video().props.ref.current = player;
+  h.video().props.onLoadedData(); await flush();
+  assert(h.overlay());
+  h.reportOpen();
+  assert(pauses > 0); assert(cleared > 0); assert(!h.video()); assert(!h.overlay());
+});
+
+
+for (const [error, status, phase] of [['moderation_pending', 409, 'pending'], ['blocked', 403, 'blocked'], ['suspended', 403, 'restricted']]) test(`status ${error} stays covered with an actionable safety explanation and cannot spend time`, async t => {
+  const h = harness(t, { status: () => globalThis.Response.json({ error }, { status }) });
+  await h.ready(); h.down(); await flush();
+  assert.equal(h.snapshots.at(-1).phase, phase); assert.equal(h.leaseRequests().length, 0); assert(!h.image());
+  assert.doesNotMatch(h.status(), /couldn.t load/i, 'Safety denial should not look like a transient download failure');
 });

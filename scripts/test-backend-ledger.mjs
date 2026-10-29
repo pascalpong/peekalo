@@ -31,6 +31,7 @@ const postgres = new EmbeddedPostgres({
   onError: (error) => console.error(error),
 });
 const clients = new Set();
+let safetyApplied = false;
 
 async function connect() {
   const client = postgres.getPgClient('postgres', '127.0.0.1');
@@ -53,7 +54,7 @@ async function fixture(client) {
   const hash = `test-only-${randomUUID()}`;
   const username = `test_${recipient.replaceAll('-', '').slice(0, 16)}`;
   await client.query('insert into auth.users(id) values ($1),($2),($3)', [owner, recipient, stranger]);
-  await client.query('insert into peekalo_profiles(id,username) values ($1,$2)', [recipient, username]);
+  await client.query(`insert into peekalo_profiles(id,username${safetyApplied ? ',review_state' : ''}) values ($1,$2${safetyApplied ? ",'approved'" : ''}),($3,$4${safetyApplied ? ",'approved'" : ''})`, [recipient, username, owner, `test_${owner.replaceAll('-', '').slice(0, 16)}`]);
   await client.query("insert into peekalo_posts(id,owner_id,upload_key,kind,status,storage_path) values ($1,$2,$3,'photo','ready','test-only/fixture.jpg')", [post, owner, randomUUID()]);
   await client.query('insert into peekalo_links(id,post_id,nonce,token_hash) values ($1,$2,$3,$4)', [link, post, randomUUID(), hash]);
   return { owner, recipient, stranger, post, link, hash, username, identity: `a:${recipient}` };
@@ -70,6 +71,18 @@ function failure(action, message) {
 async function accept(client, f) {
   assert.equal(await value(client, 'select peekalo_grant($1,$2,$3) as value', [f.owner, f.post, f.username]), 'pending');
   assert.equal(await value(client, 'select peekalo_accept($1,$2) as value', [f.recipient, f.post]), 'accepted');
+}
+
+async function operator(client) {
+  const id = randomUUID();
+  await client.query('insert into auth.users(id) values($1)', [id]);
+  await client.query("insert into peekalo_profiles(id,username,review_state) values($1,$2,'approved')", [id, `operator_${id.replaceAll('-', '').slice(0, 12)}`]);
+  await client.query('insert into peekalo_operators(account_id) values($1)', [id]);
+  return id;
+}
+
+function moderate(client, operatorId, postId, action = 'approve') {
+  return value(client, 'select peekalo_moderate($1,$2,$3,$4) as value', [operatorId, postId, action, 'Generated-fixture review']);
 }
 
 // Observe the real server lock queue instead of guessing when a promise began.
@@ -102,6 +115,14 @@ try {
     // Exercise migration of real existing rows, not just an empty database.
     if (migration.startsWith('202610160004')) legacyFixture = await fixture(db);
     await db.query(await readFile(join(root, 'supabase/migrations', migration), 'utf8'));
+    if (migration.startsWith('202610290001')) {
+      safetyApplied = true;
+      // Legacy media was deliberately quarantined by the safety rollout. Check
+      // this before reapproving the generated legacy fixture for nonce tests.
+      assert.equal(await value(db, 'select status as value from peekalo_posts where id=$1', [legacyFixture.post]), 'moderation_pending');
+      await db.query("update peekalo_profiles set review_state='approved'");
+      await db.query("update peekalo_posts set status='ready' where id=$1", [legacyFixture.post]);
+    }
   }
 
   await test('PostgreSQL protected-sharing ledger', async (t) => {
@@ -181,7 +202,7 @@ try {
     });
 
     await t.test('unavailable posts cannot consume a link or debit its viewer', async () => {
-      for (const status of ['uploading', 'failed', 'deleted']) {
+      for (const status of ['uploading', 'moderation_pending', 'rejected', 'taken_down', 'failed', 'deleted']) {
         const f = await fixture(db);
         await db.query('update peekalo_posts set status=$2 where id=$1', [f.post, status]);
         await failure(() => lease(db, f), 'unavailable');
@@ -467,13 +488,13 @@ try {
 
     await t.test('public profiles expose opaque metadata only while owner inventory reports controls', async () => {
       const f = await fixture(db); const username = `test_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
-      await db.query('insert into peekalo_profiles(id,username) values($1,$2)', [f.owner, username]);
+      await db.query('update peekalo_profiles set username=$2 where id=$1', [f.owner, username]);
       await accept(db, f);
       const profile = await value(db, 'select peekalo_public_profile($1) as value', [username]);
       assert.equal(profile.username, username); assert.equal(profile.items.length, 1);
       assert.deepEqual(Object.keys(profile.items[0]).sort(), ['createdAt', 'kind']);
       const own = (await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).items[0];
-      assert.equal(own.link.state, 'active'); assert.deepEqual(own.recipients, [{ username: f.username, requestState: 'accepted', revoked: false }]);
+      assert.equal(own.link.state, 'active'); assert.deepEqual(own.recipients, [{ accountId: f.recipient, username: f.username, requestState: 'accepted', revoked: false }]);
       assert(!JSON.stringify(own).includes(f.hash)); assert(!JSON.stringify(own).includes('storage_path'));
       await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, f.post]);
       assert.deepEqual((await value(db, 'select peekalo_public_profile($1) as value', [username])).items, []);
@@ -500,10 +521,364 @@ try {
       assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
     });
 
+    await t.test('finished uploads stay private pending independent approval, count toward quota and cannot bypass terminal decisions', async () => {
+      const f = await fixture(db); const reviewer = await operator(db);
+      const pending = [];
+      for (let i = 0; i < 2; i++) {
+        const reserved = await value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, randomUUID(), 'photo']);
+        const path = `${f.owner}/${reserved.id}/${reserved.upload_attempt}.jpg`;
+        assert.equal(await value(db, 'select peekalo_finish_upload($1,$2,$3,$4) as value', [f.owner, reserved.id, reserved.upload_attempt, path]), true);
+        // A lost finish reply remains idempotent while pending; it never publishes.
+        assert.equal(await value(db, 'select peekalo_finish_upload($1,$2,$3,$4) as value', [f.owner, reserved.id, reserved.upload_attempt, path]), true);
+        assert.equal(await value(db, 'select status as value from peekalo_posts where id=$1', [reserved.id]), 'moderation_pending');
+        await failure(() => value(db, 'select to_jsonb(peekalo_create_link($1,$2,$3,$4)) as value', [f.owner, reserved.id, randomUUID(), `test-only-${randomUUID()}`]), 'moderation_pending');
+        await failure(() => value(db, 'select peekalo_grant($1,$2,$3) as value', [f.owner, reserved.id, f.username]), 'moderation_pending');
+        pending.push(reserved);
+      }
+      const inventory = await value(db, 'select peekalo_own_posts($1) as value', [f.owner]);
+      assert.equal(inventory.activeCount, 3);
+      assert.equal(inventory.items.filter(item => item.status === 'moderation_pending').length, 2);
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, randomUUID(), 'photo']), 'quota');
+      await db.query('insert into peekalo_operators(account_id) values($1)', [f.owner]);
+      await failure(() => moderate(db, f.owner, pending[0].id), 'forbidden');
+      assert.equal((await moderate(db, reviewer, pending[0].id)).status, 'ready');
+      assert.equal((await moderate(db, reviewer, pending[1].id, 'reject')).status, 'rejected');
+      assert.equal((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).activeCount, 2);
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, pending[1].upload_key, 'photo']), 'rejected');
+      await failure(() => moderate(db, reviewer, pending[1].id), 'unavailable');
+      assert.equal((await moderate(db, reviewer, pending[0].id, 'takedown')).status, 'taken_down');
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, pending[0].upload_key, 'photo']), 'taken_down');
+      await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, pending[1].id]);
+      assert.equal((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).items.find(item => item.postId === pending[1].id).cleanupPending, true);
+    });
+
+    await t.test('username publication requires manual review and changed names return to pending without losing ownership', async () => {
+      const f = await fixture(db); const reviewer = await operator(db);
+      const original = `test_${f.owner.replaceAll('-', '').slice(0, 16)}`;
+      const username = `new_${f.owner.replaceAll('-', '').slice(0, 16)}`;
+      const saved = await value(db, 'select peekalo_save_profile($1,$2) as value', [f.owner, username]);
+      assert.deepEqual(saved, { username, reviewState: 'pending' });
+      await failure(() => value(db, 'select peekalo_public_profile($1) as value', [original]), 'unavailable');
+      await failure(() => value(db, 'select peekalo_lookup_profile($1,$2) as value', [f.recipient, username]), 'unavailable');
+      await failure(() => lease(db, f, { identity: `g:${randomUUID()}` }), 'unavailable');
+      assert.equal((await value(db, 'select peekalo_moderation_queue($1) as value', [reviewer])).profiles.some(item => item.username === username), true);
+      assert.deepEqual(await value(db, 'select peekalo_moderate_profile($1,$2,$3,$4) as value', [reviewer, username, 'approve', 'Fixture name reviewed']), { username, reviewState: 'approved' });
+      assert.equal((await value(db, 'select peekalo_public_profile($1) as value', [username])).items.length, 1);
+      assert.equal((await value(db, 'select peekalo_save_profile($1,$2) as value', [f.owner, username])).reviewState, 'approved');
+      await failure(() => value(db, 'select peekalo_save_profile($1,$2) as value', [f.stranger, username]), 'username_taken');
+      await value(db, 'select peekalo_moderate_profile($1,$2,$3,$4) as value', [reviewer, username, 'reject', 'Reported inappropriate name']);
+      await failure(() => value(db, 'select peekalo_public_profile($1) as value', [username]), 'unavailable');
+      assert.equal(await value(db, 'select owner_id as value from peekalo_posts where id=$1', [f.post]), f.owner);
+    });
+
+    await t.test('bilateral blocks deny grants, lookups, previews, claims, delivery and Inbox; unblock never restores rights or budget', async () => {
+      const f = await fixture(db); await accept(db, f);
+      const ownerName = `test_${f.owner.replaceAll('-', '').slice(0, 16)}`;
+      const direct = await lease(db, f, { hash: null, post: f.post });
+      await db.query("update peekalo_budgets set active_until=clock_timestamp()-interval '1 second' where post_id=$1", [f.post]);
+      await lease(db, f); // Account-claimed links must be revoked by the block.
+      assert.deepEqual(await value(db, 'select peekalo_block($1,$2,true) as value', [f.recipient, ownerName]), { blocked: true });
+      assert.deepEqual((await value(db, 'select peekalo_blocks($1) as value', [f.recipient])).items.map(item => item.username), [ownerName]);
+      assert.equal(await value(db, 'select revoked as value from peekalo_links where id=$1', [f.link]), true);
+      assert.equal(await value(db, 'select revoked as value from peekalo_grants where post_id=$1 and recipient_id=$2', [f.post, f.recipient]), true);
+      await failure(() => value(db, 'select peekalo_grant($1,$2,$3) as value', [f.owner, f.post, f.username]), 'blocked');
+      await failure(() => value(db, 'select peekalo_accept($1,$2) as value', [f.recipient, f.post]), 'blocked');
+      await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, direct.leaseId]), 'blocked');
+      await failure(() => value(db, 'select peekalo_view_status($1,null,$2) as value', [f.identity, f.post]), 'blocked');
+      await failure(() => value(db, 'select peekalo_lookup_profile($1,$2) as value', [f.recipient, ownerName]), 'unavailable');
+      await failure(() => value(db, 'select peekalo_public_profile($1,$2) as value', [f.username, f.owner]), 'unavailable');
+      assert.deepEqual((await value(db, 'select peekalo_inbox($1) as value', [f.recipient])).items, []);
+      assert.equal((await value(db, 'select peekalo_preview($1,$2) as value', [f.hash, f.identity])).state, 'blocked');
+      await value(db, 'select peekalo_block($1,$2,false) as value', [f.recipient, ownerName]);
+      await failure(() => lease(db, f, { hash: null, post: f.post }), 'unavailable');
+      await failure(() => lease(db, f), 'unavailable');
+      assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 4000);
+      assert.deepEqual((await value(db, 'select peekalo_blocks($1) as value', [f.recipient])).items, []);
+    });
+
+    await t.test('an identified block prevents claiming an unclaimed link but cannot identify the same person anonymously', async () => {
+      const f = await fixture(db);
+      await value(db, 'select peekalo_block($1,$2,true) as value', [f.owner, f.username]);
+      await failure(() => lease(db, f), 'blocked');
+      assert.equal(await value(db, 'select claimed_identity as value from peekalo_links where id=$1', [f.link]), null);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_budgets where post_id=$1', [f.post]), 0);
+      const guest = `g:${randomUUID()}`;
+      assert.equal((await value(db, 'select peekalo_preview($1,$2) as value', [f.hash, guest])).available, true);
+      assert.ok((await lease(db, f, { identity: guest })).leaseId);
+      // Anonymous opaque profile access is intentionally public, not a promise
+      // that a blocked person can be identified after clearing all identity.
+      assert.equal((await value(db, 'select peekalo_public_profile($1) as value', [f.username])).username, f.username);
+    });
+
+    await t.test('block commits ahead of queued reveal and never consumes a link or budget', async () => {
+      const f = await fixture(db); const blocker = await connect(); const viewer = await connect();
+      await blocker.query('begin');
+      try {
+        await blocker.query('select pg_advisory_xact_lock(730293001)');
+        const pending = lease(viewer, f).then(result => ({ result }), error => ({ error }));
+        await waitForBlock(db, viewer, blocker);
+        await value(blocker, 'select peekalo_block($1,$2,true) as value', [f.owner, f.username]);
+        await blocker.query('commit');
+        assert.equal((await pending).error?.message, 'blocked');
+        assert.equal(await value(db, 'select claimed_identity as value from peekalo_links where id=$1', [f.link]), null);
+        assert.equal(await value(db, 'select count(*)::integer as value from peekalo_leases where post_id=$1', [f.post]), 0);
+      } finally { await blocker.query('rollback'); }
+    });
+
+    await t.test('block waiting behind an in-flight authorization revokes its fresh grant before subsequent delivery', async () => {
+      const f = await fixture(db); const viewer = await connect(); const blocker = await connect();
+      await viewer.query('begin');
+      try {
+        const granted = await lease(viewer, f);
+        const pending = value(blocker, 'select peekalo_block($1,$2,true) as value', [f.owner, f.username]).then(result => ({ result }), error => ({ error }));
+        await waitForBlock(db, blocker, viewer);
+        await viewer.query('commit');
+        assert.deepEqual((await pending).result, { blocked: true });
+        await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, granted.leaseId]), 'blocked');
+        assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
+      } finally { await viewer.query('rollback'); }
+    });
+
+    await t.test('takedown serializes with post authorization and stops future delivery without resetting claims or allowances', async () => {
+      const f = await fixture(db); const reviewer = await operator(db); const viewer = await connect(); const remover = await connect();
+      await viewer.query('begin');
+      try {
+        const granted = await lease(viewer, f);
+        const pending = moderate(remover, reviewer, f.post, 'takedown').then(result => ({ result }), error => ({ error }));
+        await waitForBlock(db, remover, viewer);
+        await viewer.query('commit');
+        assert.equal((await pending).result.status, 'taken_down');
+        await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, granted.leaseId]), 'unavailable');
+        assert.equal((await value(db, 'select peekalo_preview($1) as value', [f.hash])).available, false);
+        assert.equal(await value(db, 'select claimed_identity as value from peekalo_links where id=$1', [f.link]), f.identity);
+        assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
+      } finally { await viewer.query('rollback'); }
+    });
+
+    await t.test('post reports require known authorized relationships or a link, are non-consuming and urgent duplicates escalate', async () => {
+      const f = await fixture(db); const reviewer = await operator(db); const guest = `g:${randomUUID()}`;
+      const report = (identity, kind, reason, post, username, hash) => value(db, 'select peekalo_report($1,$2,$3,$4,$5,$6,$7) as value', [identity, kind, reason, 'Generated test feedback', post, username, hash]);
+      await failure(() => report(guest, 'post', 'other', f.post, null, null), 'unavailable');
+      await failure(() => report(`a:${f.stranger}`, 'post', 'other', f.post, null, null), 'unavailable');
+      await failure(() => report(null, 'account', 'other', null, f.username, null), 'unauthorized');
+      await failure(() => report(f.identity, 'message', 'other', randomUUID(), null, null), 'conflict');
+      await failure(() => report(f.identity, 'comment', 'other', randomUUID(), null, null), 'conflict');
+      const first = await report(guest, 'post', 'spam', null, null, f.hash);
+      assert.deepEqual(await report(guest, 'post', 'child_safety', null, null, f.hash), first);
+      assert.equal(await value(db, 'select reason as value from peekalo_reports where id=$1', [first.reportId]), 'child_safety');
+      assert.equal(await value(db, 'select claimed_identity as value from peekalo_links where id=$1', [f.link]), null);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_budgets where post_id=$1', [f.post]), 0);
+      assert.equal((await report(guest, 'account', 'harassment', null, f.username, null)).state, 'open');
+      const queue = await value(db, 'select peekalo_moderation_queue($1) as value', [reviewer]);
+      assert.equal(queue.reports.find(item => item.reportId === first.reportId).username, `test_${f.owner.replaceAll('-', '').slice(0, 16)}`);
+      assert.equal(JSON.stringify(queue).includes(f.hash), false);
+      assert.equal(JSON.stringify(queue).includes(guest), false);
+      await failure(() => value(db, 'select peekalo_resolve_report($1,$2,$3) as value', [f.stranger, first.reportId, 'Unauthorized']), 'forbidden');
+      assert.equal((await value(db, 'select peekalo_resolve_report($1,$2,$3,$4) as value', [reviewer, first.reportId, 'Reviewed and referred through the safety response process', 'resolved'])).state, 'resolved');
+      assert.equal(await value(db, 'select status as value from peekalo_posts where id=$1', [f.post]), 'ready');
+    });
+
+    await t.test('concurrent reports enforce the per-identity hourly cap atomically, while repeat open targets coalesce', async () => {
+      const f = await fixture(db); const guest = `g:${randomUUID()}`;
+      const targets = [];
+      for (let i = 0; i < 12; i++) targets.push(await fixture(db));
+      const workers = await Promise.all(targets.map(() => connect()));
+      const outcomes = await Promise.allSettled(workers.map((client, i) => value(client, 'select peekalo_report($1,$2,$3,$4,null,$5) as value', [guest, 'account', 'spam', 'Generated test feedback', targets[i].username])));
+      assert.equal(outcomes.filter(item => item.status === 'fulfilled').length, 10);
+      assert(outcomes.filter(item => item.status === 'rejected').every(item => item.reason.message === 'rate_limited'));
+      const reported = outcomes.findIndex(item => item.status === 'fulfilled');
+      const first = outcomes[reported].value;
+      assert.deepEqual(await value(db, 'select peekalo_report($1,$2,$3,$4,null,$5) as value', [guest, 'account', 'spam', 'Repeat', targets[reported].username]), first);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_reports where reporter_identity=$1', [guest]), 10);
+      assert.equal((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).activeCount, 1);
+    });
+
+    await t.test('operator queue, original-media access, decisions and report dispositions require active membership and are audited', async () => {
+      const f = await fixture(db); const reviewer = await operator(db);
+      await db.query("update peekalo_posts set status='moderation_pending' where id=$1", [f.post]);
+      for (const call of [
+        () => value(db, 'select peekalo_moderation_queue($1) as value', [f.owner]),
+        () => value(db, 'select peekalo_moderation_media($1,$2) as value', [f.owner, f.post]),
+        () => moderate(db, f.owner, f.post),
+        () => value(db, 'select peekalo_moderation_audit($1) as value', [f.owner]),
+      ]) await failure(call, 'forbidden');
+      const queue = await value(db, 'select peekalo_moderation_queue($1) as value', [reviewer]);
+      assert.equal(queue.posts.some(item => item.postId === f.post), true);
+      assert.equal(JSON.stringify(queue).includes('fixture.jpg'), false);
+      assert.deepEqual(await value(db, 'select peekalo_moderation_media($1,$2) as value', [reviewer, f.post]), { kind: 'photo', path: 'test-only/fixture.jpg' });
+      await moderate(db, reviewer, f.post, 'reject');
+      const report = await value(db, 'select peekalo_report($1,$2,$3,$4,null,$5) as value', [`g:${randomUUID()}`, 'account', 'other', 'Generated', f.username]);
+      await value(db, 'select peekalo_resolve_report($1,$2,$3,$4) as value', [reviewer, report.reportId, 'No violation in generated fixture', 'dismissed']);
+      const audit = await value(db, 'select peekalo_moderation_audit($1) as value', [reviewer]);
+      for (const event of ['queue_read', 'media_read', 'reject', 'report_dismissed', 'audit_read']) assert(audit.items.some(item => item.operatorId === reviewer && item.event === event));
+      assert(audit.items.some(item => item.event === 'operator_membership' && item.targetId === reviewer));
+      assert.equal(JSON.stringify(audit).includes('fixture.jpg'), false);
+      await db.query('update peekalo_operators set enabled=false where account_id=$1', [reviewer]);
+      await failure(() => value(db, 'select peekalo_moderation_media($1,$2) as value', [reviewer, f.post]), 'forbidden');
+      await failure(() => moderate(db, reviewer, f.post, 'takedown'), 'forbidden');
+    });
+
+    await t.test('account suspension hides all public and guest delivery, revokes outgoing/incoming rights, and blocks uploads', async () => {
+      const f = await fixture(db); const reviewer = await operator(db); await accept(db, f);
+      const ownerName = `test_${f.owner.replaceAll('-', '').slice(0, 16)}`;
+      const granted = await lease(db, f);
+      assert.equal((await value(db, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [reviewer, ownerName, 'suspend', 'Fixture safety suspension'])).state, 'suspended');
+      assert.equal((await value(db, 'select peekalo_preview($1) as value', [f.hash])).available, false);
+      await failure(() => value(db, 'select peekalo_public_profile($1) as value', [ownerName]), 'unavailable');
+      await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, granted.leaseId]), 'unavailable');
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, randomUUID(), 'photo']), 'suspended');
+      assert.equal((await value(db, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [reviewer, ownerName, 'restore', 'Fixture appeal reviewed'])).state, 'active');
+      await failure(() => lease(db, f, { hash: null, post: f.post }), 'unavailable');
+      await failure(() => lease(db, f), 'unavailable');
+      assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
+    });
+
+    await t.test('suspending an account revokes claimed links even without a direct recipient grant', async () => {
+      const f = await fixture(db); const reviewer = await operator(db);
+      const granted = await lease(db, f);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_grants where post_id=$1', [f.post]), 0);
+      await value(db, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [reviewer, f.username, 'suspend', 'Fixture account review']);
+      assert.equal(await value(db, 'select revoked as value from peekalo_links where id=$1', [f.link]), true);
+      await value(db, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [reviewer, f.username, 'restore', 'Fixture appeal']);
+      await failure(() => lease(db, f), 'unavailable');
+      await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, granted.leaseId]), 'unavailable');
+      assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
+    });
+
+    await t.test('operator access revocation waits for an authorized decision then prevents subsequent reads and actions', async () => {
+      const f = await fixture(db); const reviewer = await operator(db); const actor = await connect(); const admin = await connect();
+      await actor.query('begin');
+      try {
+        await value(actor, 'select peekalo_moderation_queue($1) as value', [reviewer]);
+        const disable = admin.query('update peekalo_operators set enabled=false where account_id=$1', [reviewer]).then(result => ({ result }), error => ({ error }));
+        await waitForBlock(db, admin, actor);
+        await actor.query('commit');
+        assert.equal((await disable).result.rowCount, 1);
+        await failure(() => moderate(db, reviewer, f.post, 'takedown'), 'forbidden');
+        await failure(() => value(db, 'select peekalo_moderation_queue($1) as value', [reviewer]), 'forbidden');
+        const otherOperator = await operator(db);
+        await value(db, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [otherOperator, await value(db, 'select username as value from peekalo_profiles where id=$1', [reviewer]), 'suspend', 'Fixture safety suspension']);
+        await db.query('update peekalo_operators set enabled=true where account_id=$1', [reviewer]);
+        await failure(() => value(db, 'select peekalo_moderation_queue($1) as value', [reviewer]), 'forbidden');
+      } finally { await actor.query('rollback'); }
+    });
+
+    await t.test('concurrent owner link and recipient controls retain one post-first lock without upgrade deadlocks', async () => {
+      const f = await fixture(db); const workers = await Promise.all(Array.from({ length: 6 }, () => connect()));
+      const controls = await Promise.all(workers.map((client, i) => i % 2
+        ? value(client, 'select peekalo_grant($1,$2,$3) as value', [f.owner, f.post, f.username])
+        : value(client, 'select to_jsonb(peekalo_create_link($1,$2,$3,$4)) as value', [f.owner, f.post, randomUUID(), `test-only-${randomUUID()}`])));
+      assert(controls.filter((_, i) => i % 2).every(state => state === 'pending'));
+      assert(controls.filter((_, i) => !(i % 2)).every(link => link.id === f.link));
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_grants where post_id=$1', [f.post]), 1);
+    });
+
+    await t.test('unreviewed renamed usernames stay private while stable IDs retain block, report and revoke controls', async () => {
+      const f = await fixture(db); await accept(db, f);
+      const reviewer = await operator(db); const hiddenName = `pending_${f.recipient.replaceAll('-', '').slice(0, 12)}`;
+      await value(db, 'select peekalo_block($1,$2,true) as value', [f.owner, f.username]);
+      await value(db, 'select peekalo_save_profile($1,$2) as value', [f.recipient, hiddenName]);
+      const inventory = await value(db, 'select peekalo_own_posts($1) as value', [f.owner]);
+      assert.deepEqual(inventory.items[0].recipients, [{ accountId: f.recipient, username: null, requestState: 'accepted', revoked: true }]);
+      const blocked = await value(db, 'select peekalo_blocks($1) as value', [f.owner]);
+      assert.equal(blocked.items[0].accountId, f.recipient); assert.equal(blocked.items[0].username, null);
+      assert.equal(JSON.stringify([inventory, blocked]).includes(hiddenName), false);
+      await failure(() => value(db, 'select peekalo_block($1,$2,true) as value', [f.stranger, hiddenName]), 'recipient');
+      await failure(() => value(db, 'select peekalo_report($1,$2,$3,$4,null,$5) as value', [`g:${randomUUID()}`, 'account', 'other', '', hiddenName]), 'unavailable');
+      await failure(() => value(db, 'select peekalo_report($1,$2,$3,$4,null,null,null,$5) as value', [`g:${randomUUID()}`, 'account', 'other', '', f.recipient]), 'unauthorized');
+      const report = await value(db, 'select peekalo_report($1,$2,$3,$4,null,null,null,$5) as value', [`a:${f.owner}`, 'account', 'harassment', 'Known account concern', f.recipient]);
+      assert.ok(report.reportId);
+      await value(db, 'select peekalo_moderate_profile($1,$2,$3,$4) as value', [reviewer, hiddenName, 'reject', 'Generated rejected name']);
+      assert.equal((await value(db, 'select peekalo_blocks($1) as value', [f.owner])).items[0].username, null);
+      await value(db, 'select peekalo_block($1,null,false,$2) as value', [f.owner, f.recipient]);
+      assert.deepEqual((await value(db, 'select peekalo_blocks($1) as value', [f.owner])).items, []);
+      await value(db, 'select peekalo_block($1,null,true,$2) as value', [f.owner, f.recipient]);
+      assert.equal((await value(db, 'select peekalo_blocks($1) as value', [f.owner])).items[0].accountId, f.recipient);
+      await failure(() => value(db, 'select peekalo_block($1,$2,true,$3) as value', [f.owner, hiddenName, f.recipient]), 'conflict');
+      await failure(() => value(db, 'select peekalo_revoke_recipient($1,$2,$3) as value', [f.stranger, f.post, f.recipient]), 'unavailable');
+      assert.equal(await value(db, 'select peekalo_revoke_recipient($1,$2,$3) as value', [f.owner, f.post, f.recipient]), true);
+      assert.equal(await value(db, 'select revoked as value from peekalo_grants where post_id=$1 and recipient_id=$2', [f.post, f.recipient]), true);
+    });
+
+    await t.test('Inbox and grant responses pin account IDs while later username reuse cannot redirect revocation', async () => {
+      const f = await fixture(db);
+      assert.deepEqual(await value(db, 'select peekalo_grant_target($1,$2,$3) as value', [f.owner, f.post, f.username]), { requestState: 'pending', accountId: f.recipient });
+      const inbox = await value(db, 'select peekalo_inbox($1) as value', [f.recipient]);
+      assert.equal(inbox.items[0].senderAccountId, f.owner);
+      await value(db, 'select peekalo_save_profile($1,$2) as value', [f.recipient, `new_${f.recipient.replaceAll('-', '').slice(0, 16)}`]);
+      await value(db, 'select peekalo_save_profile($1,$2) as value', [f.stranger, f.username]);
+      const reviewer = await operator(db);
+      await value(db, 'select peekalo_moderate_profile($1,$2,$3,$4) as value', [reviewer, f.username, 'approve', 'Reused fixture name reviewed']);
+      assert.equal((await value(db, 'select peekalo_grant_target($1,$2,$3) as value', [f.owner, f.post, f.username])).accountId, f.stranger);
+      await value(db, 'select peekalo_revoke_recipient($1,$2,$3) as value', [f.owner, f.post, f.recipient]);
+      assert.equal(await value(db, 'select revoked as value from peekalo_grants where post_id=$1 and recipient_id=$2', [f.post, f.recipient]), true);
+      assert.equal(await value(db, 'select revoked as value from peekalo_grants where post_id=$1 and recipient_id=$2', [f.post, f.stranger]), false);
+    });
+
+    await t.test('grant target locks the approved username until the granted ID is returned', async () => {
+      const f = await fixture(db); const grantor = await connect(); const renamer = await connect();
+      await grantor.query('begin');
+      try {
+        const result = await value(grantor, 'select peekalo_grant_target($1,$2,$3) as value', [f.owner, f.post, f.username]);
+        assert.equal(result.accountId, f.recipient);
+        const rename = value(renamer, 'select peekalo_save_profile($1,$2) as value', [f.recipient, `new_${f.recipient.replaceAll('-', '').slice(0, 16)}`]).then(result => ({ result }), error => ({ error }));
+        await waitForBlock(db, renamer, grantor);
+        await grantor.query('commit');
+        assert.equal((await rename).result.reviewState, 'pending');
+        assert.equal(await value(db, 'select recipient_id as value from peekalo_grants where post_id=$1', [f.post]), f.recipient);
+      } finally { await grantor.query('rollback'); }
+    });
+
+    for (const action of ['queue', 'media', 'audit', 'decision', 'report', 'profile', 'account']) {
+      await t.test(`operator suspension committed while ${action} waits for safety barrier prevents its operation`, async () => {
+        const f = await fixture(db); const reviewer = await operator(db); const admin = await operator(db);
+        const operatorName = await value(db, 'select username as value from peekalo_profiles where id=$1', [reviewer]);
+        const report = await value(db, 'select peekalo_report($1,$2,$3,$4,null,$5) as value', [f.identity, 'account', 'spam', 'Generated', f.username]);
+        const blocker = await connect(); const actor = await connect();
+        const call = () => {
+          if (action === 'queue') return value(actor, 'select peekalo_moderation_queue($1) as value', [reviewer]);
+          if (action === 'media') return value(actor, 'select peekalo_moderation_media($1,$2) as value', [reviewer, f.post]);
+          if (action === 'audit') return value(actor, 'select peekalo_moderation_audit($1) as value', [reviewer]);
+          if (action === 'decision') return moderate(actor, reviewer, f.post, 'takedown');
+          if (action === 'report') return value(actor, 'select peekalo_resolve_report($1,$2,$3) as value', [reviewer, report.reportId, 'Generated resolution']);
+          if (action === 'profile') return value(actor, 'select peekalo_moderate_profile($1,$2,$3,$4) as value', [reviewer, f.username, 'reject', 'Generated decision']);
+          return value(actor, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [reviewer, f.username, 'suspend', 'Generated suspension']);
+        };
+        await blocker.query('begin');
+        try {
+          await blocker.query('select pg_advisory_xact_lock(730293001)');
+          const pending = call().then(result => ({ result }), error => ({ error }));
+          await waitForBlock(db, actor, blocker);
+          await value(blocker, 'select peekalo_moderate_account($1,$2,$3,$4) as value', [admin, operatorName, 'suspend', 'Operator access withdrawn']);
+          await blocker.query('commit');
+          assert.equal((await pending).error?.message, 'forbidden');
+          assert.equal(await value(db, 'select status as value from peekalo_posts where id=$1', [f.post]), 'ready');
+          assert.equal(await value(db, 'select review_state as value from peekalo_profiles where id=$1', [f.recipient]), 'approved');
+          assert.equal(await value(db, 'select state as value from peekalo_reports where id=$1', [report.reportId]), 'open');
+          assert.equal(await value(db, 'select count(*)::integer as value from peekalo_suspended_accounts where account_id=$1', [f.recipient]), 0);
+          assert.equal(await value(db, 'select count(*)::integer as value from peekalo_safety_audit where operator_id=$1', [reviewer]), 0);
+        } finally { await blocker.query('rollback'); }
+      });
+    }
+
     await t.test('public client roles cannot read ledger tables or call privileged functions', async () => {
       const f = await fixture(db);
-      const tables = ['profiles', 'posts', 'links', 'link_requests', 'grants', 'budgets', 'leases'];
+      const tables = ['profiles', 'posts', 'links', 'link_requests', 'grants', 'budgets', 'leases', 'operators', 'blocks', 'reports', 'safety_audit', 'suspended_accounts'];
       const calls = [
+        ['peekalo_save_profile($1,$2)', [f.owner, f.username]],
+        ['peekalo_lookup_profile($1,$2)', [f.owner, f.username]],
+        ['peekalo_block($1,$2,true)', [f.owner, f.username]],
+        ['peekalo_grant_target($1,$2,$3)', [f.owner, f.post, f.username]],
+        ['peekalo_revoke_recipient($1,$2,$3)', [f.owner, f.post, f.recipient]],
+        ['peekalo_blocks($1)', [f.owner]],
+        ['peekalo_report($1,$2,$3)', [f.identity, 'account', 'other']],
+        ['peekalo_moderation_queue($1)', [f.owner]],
+        ['peekalo_moderation_media($1,$2)', [f.owner, f.post]],
+        ['peekalo_moderate($1,$2,$3,$4)', [f.owner, f.post, 'approve', 'Fixture']],
+        ['peekalo_moderate_profile($1,$2,$3,$4)', [f.owner, f.username, 'approve', 'Fixture']],
+        ['peekalo_moderate_account($1,$2,$3,$4)', [f.owner, f.username, 'suspend', 'Fixture']],
+        ['peekalo_resolve_report($1,$2,$3)', [f.owner, randomUUID(), 'Fixture']],
+        ['peekalo_moderation_audit($1)', [f.owner]],
         ['peekalo_preview($1)', [f.hash]],
         ['peekalo_own_posts($1)', [f.owner]],
         ['peekalo_public_profile($1)', [f.username]],
@@ -528,6 +903,9 @@ try {
         await client.query('reset role');
       }
       await client.query('set role service_role');
+      await assert.rejects(() => value(client, 'select peekalo_lease_before_safety($1,$2,$3,$4) as value', [f.identity, randomUUID(), randomUUID(), f.hash]), { code: '42501' });
+      await assert.rejects(() => client.query("insert into peekalo_operators(account_id) values($1)", [f.owner]), { code: '42501' });
+      await assert.rejects(() => client.query("update peekalo_profiles set review_state='approved' where id=$1", [f.owner]), { code: '42501' });
       assert.equal((await value(client, 'select peekalo_preview($1) as value', [f.hash])).available, true);
       assert.equal((await lease(client, f)).grantedMs, 2000);
       await client.query('reset role');

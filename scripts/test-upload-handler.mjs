@@ -103,7 +103,7 @@ test('normal publication uses an attempt-scoped non-overwriting object and fence
   const f = fixture(t);
   const response = await f.send(f.request());
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { postId, kind: 'photo', status: 'ready' });
+  assert.deepEqual(await response.json(), { postId, kind: 'photo', status: 'moderation_pending' });
   assert.deepEqual(f.events, ['acquire', 'read-body', 'peekalo_reserve_post', 'normalize', 'upload', 'peekalo_finish_upload', 'cache-write']);
   assert.deepEqual(f.writes, [[expectedPath, normalized, { contentType: 'image/jpeg', upsert: false, cacheControl: '0' }]]);
   assert.deepEqual(f.calls.find(call => call.name === 'peekalo_finish_upload').args,
