@@ -1,7 +1,9 @@
-import { upload } from '../../../lib/server/handlers';
+import { upload, ownPosts } from '../../../lib/server/handlers';
 import { options } from '../../../lib/server/sharing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const OPTIONS = options;
 export const POST = upload;
+
+export const GET = ownPosts;

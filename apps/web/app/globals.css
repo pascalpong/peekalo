@@ -281,3 +281,8 @@ h1, h2 { font-family: var(--display-font); font-weight: 700; }
 .auth-return p { color: var(--muted); font-size: 16px; line-height: 1.7; }
 .auth-return-action { align-self: flex-start; border: 0; padding: 16px 28px; min-height: 52px; border-radius: var(--pk-radius-pill); background: var(--accent); color: var(--pk-color-on-accent); font: inherit; font-weight: 600; cursor: pointer; }
 .auth-return-action:focus-visible { outline: 3px solid var(--ink); outline-offset: 4px; }
+
+/* Real profile cards are opaque and have no reveal capability. */
+.public-moment { background: var(--pk-color-surface); border: 1px solid var(--line); cursor: default; }
+.public-moment:hover { transform: none; }
+.profile-identity h1 { overflow-wrap: anywhere; }

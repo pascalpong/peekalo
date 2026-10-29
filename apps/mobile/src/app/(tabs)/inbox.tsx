@@ -7,7 +7,7 @@ import { ShareCapture } from '../../components/share-capture';
 import { ReceivedMoment } from '../../components/received-moment';
 import { apiRequest, getSharingClient } from '../../lib/sharing-client';
 
-type InboxItem = { postId: string; kind: 'photo' | 'video'; senderUsername: string; requestState: 'pending' | 'accepted' };
+type InboxItem = { postId: string; kind: 'photo' | 'video'; senderUsername: string; requestState: 'pending' | 'accepted'; remainingMs?: number | null };
 export default function InboxScreen() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [selected, setSelected] = useState<InboxItem | null>(null);
@@ -129,7 +129,7 @@ export default function InboxScreen() {
       </View>}
       {items.map(item => <View key={item.postId} style={styles.item}>
         <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.text} />
-          <View style={styles.sender}><Text style={typography.section}>@{item.senderUsername}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : 'Hidden · 10 seconds total'}</Text></View></View>
+          <View style={styles.sender}><Text style={typography.section}>@{item.senderUsername}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text></View></View>
         <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
           if (!focused.current || busyAction.current || !identity.current) return;
           if (item.requestState === 'pending') void accept(item); else setSelected(item);

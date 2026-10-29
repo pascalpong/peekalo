@@ -54,6 +54,7 @@ function fixture(t, { kind = 'photo', path = 'fixture/attempt/photo.jpg', author
     },
   };
   const handlers = load(handlerSource, {
+    '@peekalo/contracts': { ACTIVE_MEDIA_LIMIT: 3 },
     './sharing': adapter,
     './processing': {},
     './upload-admission': {},

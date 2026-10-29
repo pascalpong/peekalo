@@ -150,7 +150,12 @@ For backend development without remote writes, use `pnpm test:backend`. Its mini
 
 Supabase’s default email service sends confirmations only to project-team addresses. A custom SMTP provider is needed for general signup; do not disable confirmation to work around this. The user has no email provider yet. Anonymous web link viewers do not need signup. Native Share/auth/upload/reveal and capture protection still need physical-device checks; the user deferred the next phone test.
 
-The server prepays two-second viewing slices, allows renewal near expiry and caps cumulative grants at ten seconds per identity/post. Interrupted prepaid time is charged. Opaque previews never download originals; authorized media passes through a private no-store gateway. These controls cannot erase delivered bytes or guarantee capture prevention. The three-active-post proposal is not enforced until its meaning is confirmed; `PEEKALO_ACTIVE_POST_LIMIT` is an explicit optional server setting.
+The server prepays two-second viewing slices, allows renewal near expiry and caps cumulative grants at ten seconds per identity/post. Interrupted prepaid time is charged. Opaque previews never download originals; authorized media passes through a private no-store gateway. These controls cannot erase delivered bytes or guarantee capture prevention. D-25 confirms three active moments per account; deleting one frees a slot. Upload reservations are serialized with deletion, and retries retain the same moment. This cap is fixed server-side; the former optional `PEEKALO_ACTIVE_POST_LIMIT` setting is no longer used.
+
+REL-02 adds real opaque owner/public profile cards, Profile sharing/deletion controls, and read-only allowance checks. Apply `202610280001_media_controls.sql`, deploy the matching API, then update native clients; the new screens fail closed when these endpoints are unavailable. Check the build board for actual rollout/device evidence. `/u/demo` remains the labelled sample and `demo` is reserved during username selection. Pending deletion cleanup remains visible in Profile for retry; Storage outages and orphan maintenance are operational gates rather than a byte-erasure guarantee.
+
+For isolated local controls verification, start `pnpm local:setup`, build the product app and start `pnpm dev:web:local`, then run `node --env-file=apps/web/.env.local-testing scripts/test-media-controls-local.mjs`. This script accepts only the exact loopback backend, uses generated fixtures and cleans up only accounts/objects it created.
+
 
 ### Isolated local registration testing
 

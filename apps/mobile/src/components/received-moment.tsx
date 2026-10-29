@@ -73,7 +73,10 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   const [mediaSource, setMediaSource] = useState<MediaSource | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
   const ready = useRef(false);
-  const [remaining, setRemaining] = useState(10_000);
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const statusRequest = useRef<AbortController | null>(null);
+  const statusTurn = useRef(0);
+  const allowanceReady = useRef(false);
   const [message, setMessage] = useState('Hold to reveal. Release to hide.');
   const [busy, setBusy] = useState(false);
   const session = useRef(newIdempotencyKey());
@@ -119,6 +122,31 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     }
   }, [pauseVideo]);
 
+  const refreshStatus = useCallback(async () => {
+    statusRequest.current?.abort();
+    const controller = new AbortController();
+    statusRequest.current = controller;
+    const turn = ++statusTurn.current;
+    const viewer = identity.current;
+    allowanceReady.current = false;
+    setRemaining(null);
+    if (!viewer) { setMessage('Sign in to view this moment.'); return; }
+    setMessage('Checking your viewing time…');
+    const current = () => mounted.current && !controller.signal.aborted && statusTurn.current === turn && identity.current === viewer;
+    try {
+      const result = await apiRequest<{ remainingMs: number; kind: string; state: string }>('/api/view/direct/status', {
+        body: { postId }, signal: controller.signal, expectedAccountId: viewer,
+      });
+      if (!current()) return;
+      if (!Number.isInteger(result.remainingMs) || result.remainingMs < 0 || result.remainingMs > 10_000 || result.kind !== kind || !['available', 'exhausted'].includes(result.state) || (result.state === 'exhausted') !== (result.remainingMs === 0)) throw new Error('Invalid allowance');
+      setRemaining(result.remainingMs);
+      allowanceReady.current = result.remainingMs > 0;
+      setMessage(result.remainingMs === 0 ? 'Your viewing time is used up.' : 'Hold to reveal. Release to hide.');
+    } catch (error) {
+      if (current()) setMessage(error instanceof SharingError ? error.message : 'Cannot check your viewing time. Try again.');
+    } finally { if (current()) statusRequest.current = null; }
+  }, [kind, postId]);
+
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; stop(); };
@@ -160,8 +188,10 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
             identity.current = next;
             stop();
             videoPosition.current = 0;
-            setRemaining(10_000);
-            setMessage(next ? 'Hold to reveal. Release to hide.' : 'Sign in to view this moment.');
+            statusRequest.current?.abort(); statusTurn.current++; allowanceReady.current = false;
+            setRemaining(null);
+            setMessage(next ? 'Checking your viewing time…' : 'Sign in to view this moment.');
+            void Promise.resolve().then(() => { if (alive) void refreshStatus(); });
           }
         });
         unsubscribe = () => subscription.subscription.unsubscribe();
@@ -170,15 +200,19 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
         if (!alive) return;
         if (error) throw error;
         if (revision === authRevision) identity.current = data.session?.user.id ?? null;
-        setMessage(identity.current ? 'Hold to reveal. Release to hide.' : 'Sign in to view this moment.');
         setProtectedScreen(true);
+        await refreshStatus();
       } catch { releaseProtection(); if (alive) setMessage('Protected viewing couldn’t start. Close and try again.'); }
     })();
-    const change = AppState.addEventListener('change', state => { if (state !== 'active') stop(); });
+    const change = AppState.addEventListener('change', state => {
+      if (state !== 'active') { stop(); statusRequest.current?.abort(); statusTurn.current++; allowanceReady.current = false; setRemaining(null); }
+      else if (alive) void refreshStatus();
+    });
     const blur = AppState.addEventListener('blur', stop);
     return () => {
       alive = false;
       setup.abort();
+      statusRequest.current?.abort(); statusTurn.current++; allowanceReady.current = false;
       unsubscribe?.();
       unsubscribeCapture?.();
       stop();
@@ -187,10 +221,11 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       change.remove(); blur.remove();
       releaseProtection();
     };
-  }, [stop]));
+  }, [refreshStatus, stop]));
 
   const start = async (duration?: number) => {
-    if (!protectedScreen || !captureGuardAllowsReveal() || held.current || AppState.currentState !== 'active') return;
+    if (!protectedScreen || !allowanceReady.current || !captureGuardAllowsReveal() || held.current || AppState.currentState !== 'active') return;
+    statusRequest.current?.abort(); statusTurn.current++;
     held.current = true;
     const current = ++epoch.current;
     const viewer = identity.current;
@@ -222,7 +257,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
         const previous = activeLease.current;
         try {
           const response = await apiRequest<Lease>('/api/view/direct', {
-            body: { postId, sessionId: session.current, requestId: newIdempotencyKey() }, signal: controller.signal,
+            body: { postId, sessionId: session.current, requestId: newIdempotencyKey() }, signal: controller.signal, expectedAccountId: viewer ?? undefined,
           });
           if (!valid()) return;
           const serverExpires = Date.parse(response.expiresAt);
@@ -271,8 +306,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
             }
           }
           stop();
-          setMessage(error instanceof SharingError && error.code === 'exhausted' ? 'Your viewing time is used up.' : 'This moment is unavailable. Try again in a moment.');
-          if (error instanceof SharingError && error.code === 'exhausted') setRemaining(0);
+          setMessage(error instanceof SharingError ? error.message : 'This moment is unavailable. Try again in a moment.');
+          if (error instanceof SharingError && error.code === 'exhausted') { allowanceReady.current = false; setRemaining(0); }
+          else if (error instanceof SharingError && ['unavailable', 'unauthorized', 'account_changed', 'sign_in_required'].includes(error.code)) { allowanceReady.current = false; setRemaining(null); }
         } finally { pending = false; }
       };
       await tick();
@@ -309,11 +345,11 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     stop(); setMessage('The moment couldn’t load. Hold to try again.');
   }, [mediaSource, stop]);
   return <View style={styles.section}>
-    <Text style={styles.budget}>{(Math.ceil(remaining / 100) / 10).toFixed(1)}s left</Text>
+    <Text style={styles.budget}>{remaining === null ? 'Viewing time not checked' : `${(Math.ceil(remaining / 100) / 10).toFixed(1)}s left`}</Text>
     <View style={styles.card} accessible accessibilityRole="button" accessibilityLabel="Hold to reveal this moment"
       accessibilityHint="Release to hide. Ten seconds total across all holds."
       onLayout={e => { bounds.current = e.nativeEvent.layout; }}
-      onStartShouldSetResponder={() => protectedScreen && remaining > 0}
+      onStartShouldSetResponder={() => protectedScreen && remaining !== null && remaining > 0}
       onResponderGrant={e => { if (e.nativeEvent.touches.length === 1) void start(); }}
       onResponderStart={e => { if (e.nativeEvent.touches.length !== 1) stop(); }}
       onResponderRelease={stop} onResponderTerminate={stop} onResponderTerminationRequest={() => true}
@@ -327,13 +363,14 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
             style={StyleSheet.absoluteFill} resizeMode="contain" onLoad={() => mediaReadyChanged(true)} onError={mediaFailed} />
             : <ReceivedVideo source={mediaSource} reveal={reveal} canPlay={canPlay} onReady={mediaReadyChanged} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />}
         </View> : null}
-        {!reveal || !mediaReady ? <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View> : null}
+        {!reveal || !mediaReady ? <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining === null ? 'Checking viewing time' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View> : null}
       </View>
     </View>
     <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>
-    <Pressable accessibilityRole="button" disabled={!protectedScreen || remaining <= 0} style={styles.button} onPress={() => { void start(1000); }}>
+    <Pressable accessibilityRole="button" disabled={!protectedScreen || remaining === null || remaining <= 0} style={styles.button} onPress={() => { void start(1000); }}>
       <Text style={styles.buttonText}>Reveal for 1 second</Text>
     </Pressable>
+    {!held.current && <Pressable accessibilityRole="button" style={styles.button} onPress={() => { stop(); void refreshStatus(); }}><Text style={styles.buttonText}>Check viewing time again</Text></Pressable>}
     <Text style={styles.note}>Viewing time is shared across your devices. Revealed content may still be photographed or retained.</Text>
   </View>;
 }

@@ -14,7 +14,7 @@ Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished e
 - [ ] APP-TEST-01: isolated local email signup/confirmation/login/username/sign-out (ten assertions) and local sharing (71 assertions) pass. Hosted Google testing is configured and routes to the expected client/callback. Android APK build/install, USB reverse connections and native startup pass on Samsung; native local signup/confirmation/login/username now pass with user and backend evidence. Native photo capture/upload/link creation pass with user and private-storage evidence; Android Chrome photo reveal and local direct-photo recipient delivery/acceptance/reveal/hide/exhaustion also pass on the physical Samsung (two isolated app accounts, one device). Direct native video upload/recipient acceptance, playback with sound, release/hide/resume and 10,000 ms exhaustion also pass on the same Samsung. The automatic recording stop around ten seconds is user-confirmed. Native password recovery also passes on the Samsung: request, captured email/callback, user password update, old-password denial, new-password login and replay rejection without replacing the normal login. Hosted Google browser sign-in, native callback and signed-in profile loading now pass on Samsung. Google cancellation left the app signed out, and a subsequent retry succeeded on the same device. Release cold-link, exact duration, interruption and physical iOS tests remain pending. Public signup SMTP/domain remains pending.
 - [x] Implement PHOTO-01 local fixture reveal on mobile/web: hold/release/cancel, cumulative ten-second allowance, countdown/exhaustion, keyboard and one-second accessible alternative. Runtime-only demo; server/device criteria below remain separate.
 
-- [ ] Interpret the three-upload limit. Anonymous globally single-use links and chosen-account native sharing are confirmed.
+- [x] Clarify the maximum-three rule: D-25 confirms three active moments per account and deleting one frees a slot. Anonymous globally single-use links and chosen-account native sharing remain confirmed.
 - [ ] Set up Expo development builds and the restricted web viewer using sample media.
 - [ ] Complete physical verification of default Camera, tap-to-photo and hold/release video with automatic stop at ten seconds. Samsung photo framing and video recording/playback are user-confirmed; exact duration, audio and physical iOS checks remain pending.
 - [x] Implement local photo/video capture, review, Retake/Discard and app-cache drafts. Tap takes a photo; a 300 ms hold starts video, release stops it, and native `maxDuration` plus a JavaScript fallback stop at ten seconds. Video review has play/pause.
@@ -25,7 +25,7 @@ Prepared 15 October 2026. Feature checklist; unchecked items remain unfinished e
 - [ ] Complete consistent 9:16 framing and fixed-logo verification on physical devices (Samsung preview/photo framing confirmed); use difference blend only where reliable, with a readable fallback. Physical iOS evidence remains pending.
 - [ ] Bottom navigation: Inbox left, prominent Camera button in the center, Profile right; tapping Camera opens the in-app camera.
 - [ ] Allow sharing only from in-app captures; no gallery, photo-library or file import actions or permissions.
-- [ ] Review/retake/discard capture, then select recipient accounts or create a single-use link. Photo/video review actions are implemented locally; real recipient/link actions remain planned.
+- [ ] Review/retake/discard capture, then select recipient accounts or create a single-use link. Photo/video review and connected recipient/link actions are implemented; REL-02 adds retained Profile controls and authoritative allowance checks. See the board for actual device/hosted evidence.
 - [ ] Handle camera/microphone denial and recording interruptions; do not send partial captures or auto-save to the photo library.
 - [x] Implement a server ledger per account-or-guest identity/post with a 10,000 ms maximum allowance. All four migrations are deployed to the dedicated development project; the disposable PostgreSQL suite and 64 live HTTP/Auth/Storage assertions pass under SUPABASE-01.
 - [x] Prototype atomic, idempotent leases and conservative accounting across holds/devices. PostgreSQL tests cover single-winner claims, access-path retry scope, competing sessions, exhaustion and revoke/expiry lock races; physical-device behavior remains separate.
@@ -67,7 +67,7 @@ Acceptance examples:
 Development implementation includes authenticated private upload/normalization, protected links, accepted recipient grants, a transactional cumulative ledger and owner revocation. SUPABASE-01 applies all four migrations and passes 64 live backend assertions with generated fixtures through the local production gateway. Unchecked end-to-end/beta criteria below still require their full acceptance evidence; general signup email and physical native sharing remain pending; HOST-02 now passes 71 hosted assertions.
 
 - [ ] Native email verification, recovery and username/profile; server-issued anonymous web cookie, no guest login requirement. REL-01 prepares isolated confirmation/resend/cold-verifier callbacks and native Apple login alongside Google; local source/integration evidence is on the board. Domain/SMTP delivery, intended Google audience, Apple provider/signing/relay and distribution-signed real-domain cold callbacks remain required.
-- [ ] Reserve upload slots atomically; enforce the selected three-item policy.
+- [ ] Reserve upload slots atomically; enforce the selected three-item policy. REL-02 implements D-25 and verifies concurrent reservations/deletion/retry in disposable PostgreSQL plus isolated local HTTP integration; hosted rollout and device controls verification remain pending.
 - [ ] Native camera capture only, private staging upload of those captures and safe progress/retry states; no gallery, photo-library or file imports.
 - [ ] Trusted type/size/dimensions/duration checks and resource-limited processing.
 - [ ] Normalized media, metadata removal, separate heavily blurred preview/poster.
@@ -97,7 +97,7 @@ Meaningful backend/security checks:
 ## Milestone 3: minimal social features
 
 - [ ] Username lookup, chosen-recipient sharing and chronological “Shared with you” list in Inbox.
-- [ ] Profile with maximum three active blurred media cards.
+- [ ] Profile with maximum three active hidden media cards. REL-02 implements real own/public inventories using opaque placeholders, owner deletion and link/recipient controls; remaining rollout/device evidence is on the board.
 - [ ] Flat comments; author deletion, post-owner removal, reports and rate limits.
 - [ ] 1:1 conversations with first-sender accept/decline, text messages and owner-sent existing-post references.
 - [ ] Durable storage, private realtime update signals and authorized data fetches.

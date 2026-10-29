@@ -434,6 +434,7 @@ export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitLis
 const errorMessages: Record<string, string> = {
   unauthorized: 'Please sign in again to continue.',
   sign_in_required: 'Please sign in again to continue.',
+  username_reserved: 'That username is reserved for Peekalo’s sample profile. Please choose another.',
   username_taken: 'That username is taken. Please choose another.',
   invalid_username: 'Use 3–24 letters, numbers or underscores for your username.',
   recipient_not_found: 'That username was not found. Check the spelling and try again.',
@@ -453,20 +454,28 @@ const errorMessages: Record<string, string> = {
   processing_busy: 'Another capture is being prepared. Wait a moment and try again.',
   sharing_unavailable: 'Peekalo sharing is temporarily unavailable. Please try again.',
   rate_limited: 'Too many attempts. Wait a moment, then try again.',
-  limit_reached: 'Your active media limit has been reached.',
-  active_limit: 'Your active media limit has been reached.',
+  limit_reached: 'You have three active moments. Delete one from Profile to make room.',
+  active_limit: 'You have three active moments. Delete one from Profile to make room.',
+  exhausted: 'Your viewing time is used up.',
+  already_claimed: 'This single-use link has already been claimed.',
+  expired: 'This link has expired.',
+  unavailable: 'This moment is no longer available. It may have been deleted or access revoked.',
+  viewer_busy: 'This moment is open on another device. Wait a moment and try again.',
+  renew_later: 'Your previous viewing slice is still active. Hold again in a moment.',
+  account_changed: 'Your account changed. Reopen sharing before continuing.',
   conflict: 'This action changed while it was being retried. Close sharing and try again.',
   idempotency_conflict: 'This action changed while it was being retried. Close sharing and try again.',
 };
 
 export async function apiRequest<T>(path: string, options: {
-  method?: string; body?: unknown; headers?: Record<string, string>; signal?: AbortSignal;
+  method?: string; body?: unknown; headers?: Record<string, string>; signal?: AbortSignal; expectedAccountId?: string;
 } = {}): Promise<T> {
   checkCancelled(options.signal);
   const client = await getSharingClient(options.signal);
   const { data, error } = await client.auth.getSession();
   checkCancelled(options.signal);
   if (error || !data.session) throw new SharingError(errorMessages.unauthorized, 'unauthorized');
+  if (options.expectedAccountId && data.session.user.id !== options.expectedAccountId) throw new SharingError(errorMessages.account_changed, 'account_changed');
   const multipart = options.body instanceof FormData;
   let response: Response;
   try {

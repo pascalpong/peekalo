@@ -63,7 +63,7 @@ function walk(node, predicate) {
   }
   return predicate(node) ? node : walk(node.props?.children, predicate);
 }
-function harness(t, { lease, skew = 0, kind = 'photo' } = {}) {
+function harness(t, { lease, skew = 0, kind = 'photo', status } = {}) {
   const time = clock();
   const requests = [], snapshots = [];
   const window = eventTarget({ location: { hash: '#non-sensitive-fixture-token', origin: 'https://viewer.example.invalid' } });
@@ -117,7 +117,7 @@ function harness(t, { lease, skew = 0, kind = 'photo' } = {}) {
     fetch: async (url, options) => {
       const entry = { url, ...options, body: JSON.parse(options.body) };
       requests.push(entry);
-      if (url === '/api/view/preview') return globalThis.Response.json({ available: true, kind });
+      if (url === '/api/view/status') return status ? status(entry) : globalThis.Response.json({ state: 'available', remainingMs: 10_000, kind });
       assert.equal(url, '/api/view/lease');
       return lease ? lease(entry, requests.filter(item => item.url.endsWith('/lease')).length, { time, granted }) : globalThis.Response.json(granted());
     },
@@ -223,7 +223,7 @@ test('a continuous hold receives at most ten seconds through two-second grants a
   assert.equal(h.status(), 'Your viewing time is used up.');
   assert.equal(h.remaining(), 0);
   assert.equal(h.leaseRequests().length, 5);
-  assert(h.snapshots.every(state => Number.isFinite(state.remainingMs) && state.remainingMs >= 0 && state.remainingMs <= 10_000));
+  assert(h.snapshots.every(state => (state.remainingMs === null || Number.isFinite(state.remainingMs) && state.remainingMs >= 0 && state.remainingMs <= 10_000)));
 });
 
 test('the accessible one-second action uses the same prepaid allowance without automatic renewal', async t => {
@@ -448,4 +448,44 @@ test('video never autoplays while loading or between leases and only readiness p
   element.props.onLoadedData(); element.props.onError(); await flush();
   assert.equal(plays, 1);
   assert.equal(pauses, stopped);
+});
+
+
+test('a restored guest displays its server balance before any deliberate reveal', async t => {
+  const h = harness(t, { status: () => globalThis.Response.json({ state: 'available', remainingMs: 2000, kind: 'photo' }) });
+  await h.ready();
+  assert.equal(h.snapshots.at(-1).remainingMs, 2000);
+  assert.equal(h.requests.length, 1); assert.equal(h.requests[0].url, '/api/view/status');
+  assert.equal(h.mountedOverlay(), undefined);
+});
+
+test('an exhausted guest never receives a provisional ten seconds on reload', async t => {
+  const h = harness(t, { status: () => globalThis.Response.json({ state: 'exhausted', remainingMs: 0, kind: 'photo' }) });
+  await h.ready(); h.down(); await flush();
+  assert.equal(h.snapshots.at(-1).phase, 'exhausted');
+  assert.equal(h.snapshots.at(-1).remainingMs, 0); assert.equal(h.requests.length, 1);
+});
+
+test('a failed status lookup keeps the balance unknown and cannot request clear media', async t => {
+  const h = harness(t, { status: () => Promise.reject(new Error('offline')) });
+  await h.ready(); h.down(); await flush();
+  assert.equal(h.snapshots.at(-1).phase, 'error');
+  assert.equal(h.snapshots.at(-1).remainingMs, null); assert.equal(h.requests.length, 1);
+});
+
+
+test('a temporary status service failure offers retry and can recover without consuming a lease', async t => {
+  let attempt = 0;
+  const h = harness(t, { status: () => ++attempt === 1 ? globalThis.Response.json({ error: 'sharing_unavailable' }, { status: 503 }) : globalThis.Response.json({ state: 'available', remainingMs: 4000, kind: 'photo' }) });
+  await h.ready(); assert.equal(h.snapshots.at(-1).phase, 'error');
+  h.retry(); await flush(); assert.equal(h.snapshots.at(-1).phase, 'ready'); assert.equal(h.snapshots.at(-1).remainingMs, 4000);
+  assert.equal(h.leaseRequests().length, 0);
+});
+
+
+for (const [error, phase] of [['already_claimed', 'claimed'], ['expired', 'expired']]) test(`status ${error} has a specific covered explanation and cannot spend time`, async t => {
+  const h = harness(t, { status: () => globalThis.Response.json({ error }, { status: 410 }) });
+  await h.ready(); h.down(); await flush();
+  assert.equal(h.snapshots.at(-1).phase, phase); assert.equal(h.leaseRequests().length, 0);
+  assert.match(h.status(), /Ask the sender for a new link/);
 });

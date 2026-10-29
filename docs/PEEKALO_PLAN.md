@@ -24,7 +24,7 @@ Confirmed by the user:
 - Camera preview and capture review share a centered portrait 9:16 frame fitted to the screen; taller screens retain dark extra space instead of changing the visible crop. Center-crop captured photos to exact 9:16. Keep D-22's canonical logo fixed at the top on a subtle dark backing for consistent colors/contrast. The center navigation button stays unchanged.
 - Tap the shutter for a photo; hold for 300 ms to start video, then release to stop. Record at most ten seconds. The first hold requests microphone access when needed; hold again after granting it.
 - Photos and short videos, with a maximum video duration of ten seconds.
-- An initial upload limit of three; the exact meaning is still a planning assumption below.
+- Maximum three active moments per account; deletion frees a slot (D-25). Active upload reservations count toward admission; retries retain their original moment.
 - Press and hold to reveal. **Each person gets ten seconds total per post across all holds**, rather than a fresh ten seconds on every hold.
 - Share a post by link; open it in the app when possible or in a web viewer.
 - Comments and chat belong in the mobile apps.
@@ -38,7 +38,7 @@ Resolved design choices and proposed defaults for review; the rows above disting
 
 | Decision | Proposed first-version behavior |
 | --- | --- |
-| Three uploads | Three active media posts per account, including processing reservations; delete one to free a slot. One photo or video per post. |
+| Three active moments (confirmed D-25) | Three active media posts per account, including processing reservations; delete one to free a slot. One photo or video per post. |
 | App identity | Verified account; explicit post-recipient grant. |
 | Web identity | Anonymous random browser identifier in a secure cookie, bound to an atomic server-side link claim. Clearing the cookie loses resumption rights; it does not reopen the link. |
 | Meaning of person | Account in the app; browser identity on anonymous web. Neither proves a unique human. |
@@ -80,7 +80,7 @@ This design uses provider-managed storage and server processing, not end-to-end 
 | Shared post viewer and countdown | Yes | Yes, anonymous and one claimant per link |
 | Sign-in | Full account access | Not required for guest viewing |
 | Take photo / record <=10-second video | Primary flow | No |
-| Privately upload in-app captures / manage posts | Yes; three-active-post policy remains provisional | No |
+| Privately upload in-app captures / manage posts | Yes; three active moments, deletion frees a slot | No |
 | Feed | Chronological “Shared with you” and own posts | No |
 | Comments | Flat text comments; author can delete own, post owner can remove | No |
 | Chat | Text and existing-post cards | No |
@@ -226,8 +226,11 @@ The current Node API uses these contracts. This records the implemented developm
 
 | Endpoint | Identity and input | Result / rule |
 | --- | --- | --- |
-| `POST /api/posts` | Verified account bearer; UUID `Idempotency-Key`; multipart captured `file` and `kind` | Private trusted normalization; stable `postId` on retry. Concurrent processing returns `upload_in_progress`. Optional server quota remains explicitly configured until P-01 is resolved. |
-| `POST /api/posts/:id/link` | Owner bearer and UUID `Idempotency-Key` | `{url, expiresAt}`; one current link per post. Every request key maps to its original link, including requests that reused an active link. A retry after revocation/expiry returns the old result; a new key is required to create a replacement. Migration 004 backfills stored canonical keys; earlier alias keys were not recorded and cannot be reconstructed. |
+| `POST /api/posts` | Verified account bearer; UUID `Idempotency-Key`; multipart captured `file` and `kind` | Private trusted normalization; stable `postId` on retry. Concurrent processing returns `upload_in_progress`. Fixed three-active-moment server quota (D-25); simultaneous reservations share the owner lock. |
+| `GET /api/posts`, `DELETE /api/posts/:id` | Owner bearer | Opaque owner inventory, authoritative active-slot count and recipient/link state; deletion atomically revokes access, retains an upload-key tombstone and retries pending private object cleanup. |
+| `GET /api/profile/:username`, `/u/:username` | Public, no bearer | Kind/time-only opaque profile cards. No post IDs, clear-media URLs, tokens or recipient data. `/u/demo` is reserved for the labelled sample. |
+| `POST /api/view/status`, `/api/view/direct/status` | Link token plus existing guest cookie/account, or accepted recipient account/post | Read-only remaining allowance; never creates a guest, claims a link, inserts a budget or grants media. A claimed link requires its original identity. |
+| `POST /api/posts/:id/link` | Owner bearer and UUID `Idempotency-Key` | `{url, expiresAt, state}`; one current link per post. The state distinguishes active/claimed/expired/revoked on replay. Every request key maps to its original link, including requests that reused an active link. A retry after revocation/expiry returns the old result; a new key is required to create a replacement. Migration 004 backfills stored canonical keys; earlier alias keys were not recorded and cannot be reconstructed. |
 | `DELETE /api/posts/:id/link` | Owner bearer | Revokes all links for that post; future authorizations fail. |
 | `POST /api/posts/:id/recipients` | Owner bearer; `{username}` | Creates or restores an explicit account grant, returning `{requestState}`. Sending again preserves acceptance and spent time. |
 | `DELETE /api/posts/:id/recipients` | Owner bearer; `{username}` | Revokes that recipient's grant. |
@@ -308,7 +311,7 @@ Do not create custom skills yet. Once the workflows are proven and repeated, can
 
 ## 13. Decisions still needing a product answer
 
-1. Does “maximum three” mean three active posts per user as proposed, three lifetime uploads, or three files in one post?
+1. Resolved by D-25: maximum three active moments per account; deleting one frees a slot. This is not a daily or lifetime limit.
 2. Confirm the proposed first-sender request flow. Navigation is confirmed: Inbox left, prominent Camera center opening the in-app camera, Profile right. Capture-only sharing, chosen-account native recipients and anonymous globally single-use links are confirmed.
 3. Accept conservative charging of short interrupted reveal slices? Prototype should make the effect understandable before finalizing it.
 4. What launch countries and age group are intended? The proposed adult invited beta is only a planning default.

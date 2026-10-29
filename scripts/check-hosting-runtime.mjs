@@ -26,7 +26,6 @@ export function validateHostingEnvironment(env) {
     if (typeof env.SUPABASE_ANON_KEY !== 'string' || !env.SUPABASE_ANON_KEY.trim() ||
         typeof env.SUPABASE_SERVICE_ROLE_KEY !== 'string' || !env.SUPABASE_SERVICE_ROLE_KEY.trim() ||
         typeof env.SHARE_TOKEN_SECRET !== 'string' || env.SHARE_TOKEN_SECRET.trim().length < 32) throw new Error(failure);
-    if (env.PEEKALO_ACTIVE_POST_LIMIT !== undefined && !/^[1-9]\d?$/.test(env.PEEKALO_ACTIVE_POST_LIMIT)) throw new Error(failure);
     return { supabaseUrl, appUrl };
   } catch { throw new Error(failure); }
 }

@@ -45,10 +45,11 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 const text = value => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
-function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true, captureStatus = 'clear' } = {}) {
+function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true, captureStatus = 'clear', status } = {}) {
   const players = [], playbackEvents = [];
   let videoChild = null;
   let loadedImageSource = null;
+  const statusCalls = [];
   const time = fakeClock(), calls = [], subscribers = new Set(), appListeners = new Map(), hooks = [];
   const captureListeners = new Set();
   let captureState = captureStatus;
@@ -187,6 +188,10 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     '../lib/sharing-client': {
       SharingError, newIdempotencyKey: randomUUID, getSharingClient: async () => client, resolveApiUrl: path => `${origin}${path}`,
       apiRequest: async (path, options) => {
+        if (path === '/api/view/direct/status') {
+          statusCalls.push({ ...options, account: session?.user.id });
+          return status ? status(statusCalls.at(-1), statusCalls.length) : { remainingMs: 10_000, kind, state: 'available' };
+        }
         assert.equal(path, '/api/view/direct');
         const entry = { ...options, account: session?.user.id, token: session?.access_token }; calls.push(entry);
         return request ? request(entry, calls.length, { time, grant }) : grant();
@@ -212,7 +217,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
   const unmount = () => { if (!mounted) return; destroyVideo(); mounted = false; for (const hook of hooks) hook?.cleanup?.(); };
   t.after(unmount);
   return {
-    time, calls, grant, ready: flush, unmount, unfocus, refocus, players, playbackEvents,
+    time, calls, statusCalls, grant, ready: flush, unmount, unfocus, refocus, players, playbackEvents,
     capture(status, notify = true) { captureState = status; if (notify) for (const listener of captureListeners) listener(); },
     captureListenerCount: () => captureListeners.size,
     press() { const card = find(tree, node => Boolean(node.props?.onResponderGrant)); if (card.props.onStartShouldSetResponder()) card.props.onResponderGrant({ nativeEvent: { touches: [{}] } }); },
@@ -236,7 +241,8 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     video: () => videoChild?.tree,
     videoProps: () => find(tree, node => typeof node.type === 'function' && node.type.name === 'ReceivedVideo')?.props,
     rawImage: () => find(tree, node => node.type === 'Image'),
-    remaining: () => Number.parseFloat(text(find(tree, node => node.type === 'Text' && text(node.props.children).endsWith('s left')).props.children)),
+    remaining: () => { const node = find(tree, node => node.type === 'Text' && text(node.props.children).endsWith('s left')); return node ? Number.parseFloat(text(node.props.children)) : null; },
+    retryStatus() { find(tree, node => node.type === 'Pressable' && find(node.props.children, child => child.type === 'Text' && child.props.children === 'Check viewing time again')).props.onPress(); },
     message: () => find(tree, node => node.props?.accessibilityLiveRegion === 'polite').props.children,
   };
 }
@@ -686,4 +692,33 @@ test('iOS recipient keeps its existing per-view path without Android guard subsc
   const h = harness(t, { platform: 'ios', captureStatus: 'pending' }); await h.ready();
   assert.equal(h.captureListenerCount(), 0); h.press(); await flush(); assert.equal(h.calls.length, 1);
   assert.equal(h.imageVisible(), true);
+});
+
+
+test('initial remaining allowance is unknown until a read-only status succeeds', async t => {
+  const pending = deferred(); const h = harness(t, { status: () => pending.promise });
+  await h.ready();
+  assert.equal(h.remaining(), null); h.press(); await flush(); assert.equal(h.calls.length, 0);
+  pending.resolve({ remainingMs: 2000, kind: 'photo', state: 'available' }); await flush();
+  assert.equal(h.remaining(), 2); assert.equal(h.calls.length, 0);
+  h.press(); await flush(); assert.equal(h.calls.length, 1);
+});
+
+test('already exhausted status never invents a fresh balance or starts a lease', async t => {
+  const h = harness(t, { status: () => ({ remainingMs: 0, kind: 'photo', state: 'exhausted' }) });
+  await h.ready(); assert.equal(h.remaining(), 0); h.press(); h.once(); await flush();
+  assert.equal(h.calls.length, 0); assert.match(h.message(), /used up/);
+});
+
+test('status failure stays unknown and can retry without revealing or charging', async t => {
+  const h = harness(t, { status: (_entry, count) => count === 1 ? Promise.reject(new SharingError('Offline')) : { remainingMs: 4000, kind: 'photo', state: 'available' } });
+  await h.ready(); assert.equal(h.remaining(), null); h.press(); await flush(); assert.equal(h.calls.length, 0);
+  h.retryStatus(); await flush(); assert.equal(h.remaining(), 4); assert.equal(h.calls.length, 0);
+});
+
+test('account switch invalidates a late balance from the previous viewer', async t => {
+  const pending = deferred(); const h = harness(t, { status: entry => entry.account === 'account-a' ? pending.promise : { remainingMs: 0, kind: 'photo', state: 'exhausted' } });
+  await h.ready(); h.account('account-b'); await flush();
+  pending.resolve({ remainingMs: 10_000, kind: 'photo', state: 'available' }); await flush();
+  assert.equal(h.remaining(), 0); h.press(); await flush(); assert.equal(h.calls.length, 0);
 });

@@ -401,11 +401,117 @@ try {
       });
     }
 
+    await t.test('read status never claims links or creates budget/lease rows, including cookie loss', async () => {
+      const f = await fixture(db);
+      const status = identity => value(db, 'select peekalo_view_status($1,$2) as value', [identity, f.hash]);
+      for (const identity of [null, `g:${randomUUID()}`, f.identity]) {
+        assert.deepEqual(await status(identity), { kind: 'photo', state: 'available', remainingMs: 10000 });
+      }
+      assert.equal(await value(db, 'select claimed_identity as value from peekalo_links where id=$1', [f.link]), null);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_budgets where post_id=$1', [f.post]), 0);
+      const original = `g:${randomUUID()}`;
+      const granted = await lease(db, f, { identity: original });
+      assert.deepEqual(await status(original), { kind: 'photo', state: 'available', remainingMs: granted.remainingMs });
+      await failure(() => status(null), 'claimed');
+      await failure(() => status(`g:${randomUUID()}`), 'claimed');
+      await db.query('update peekalo_budgets set spent_ms=10000 where post_id=$1', [f.post]);
+      assert.deepEqual(await status(original), { kind: 'photo', state: 'exhausted', remainingMs: 0 });
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_leases where post_id=$1', [f.post]), 1);
+      await value(db, 'select peekalo_revoke($1,$2) as value', [f.owner, f.post]);
+      await failure(() => status(original), 'unavailable');
+    });
+
+    await t.test('direct status requires accepted nonrevoked grant and shares the ledger with Inbox', async () => {
+      const f = await fixture(db);
+      const status = identity => value(db, 'select peekalo_view_status($1,null,$2) as value', [identity, f.post]);
+      await value(db, 'select peekalo_grant($1,$2,$3) as value', [f.owner, f.post, f.username]);
+      assert.equal((await value(db, 'select peekalo_inbox($1) as value', [f.recipient])).items[0].remainingMs, null);
+      await failure(() => status(f.identity), 'unavailable');
+      await failure(() => status(`a:${f.stranger}`), 'unavailable');
+      await failure(() => status(null), 'unauthorized');
+      await accept(db, f);
+      assert.equal((await status(f.identity)).remainingMs, 10000);
+      await lease(db, f, { hash: null, post: f.post });
+      assert.equal((await status(f.identity)).remainingMs, 8000);
+      assert.equal((await value(db, 'select peekalo_inbox($1) as value', [f.recipient])).items[0].remainingMs, 8000);
+      await value(db, 'select peekalo_revoke($1,$2,$3) as value', [f.owner, f.post, f.username]);
+      await failure(() => status(f.identity), 'unavailable');
+      assert.deepEqual((await value(db, 'select peekalo_inbox($1) as value', [f.recipient])).items, []);
+    });
+
+    await t.test('default and permissive quota calls cannot admit a fourth active reservation; deletion frees one', async () => {
+      const f = await fixture(db);
+      const workers = await Promise.all([connect(), connect(), connect(), connect()]);
+      const requests = await Promise.allSettled(workers.map((client, i) => value(client, 'select peekalo_reserve_post($1,$2,$3,$4) as value', [f.owner, randomUUID(), 'photo', i % 2 ? 99 : null])));
+      assert.equal(requests.filter(r => r.status === 'fulfilled').length, 2);
+      assert(requests.filter(r => r.status === 'rejected').every(r => r.reason.message === 'quota'));
+      const inventory = await value(db, 'select peekalo_own_posts($1) as value', [f.owner]);
+      assert.equal(inventory.activeCount, 3); assert.equal(inventory.availableSlots, 0); assert.equal(inventory.limit, 3);
+      await failure(() => value(db, 'select peekalo_delete_post($1,$2) as value', [f.stranger, f.post]), 'unavailable');
+      await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, f.post]);
+      const next = await value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, randomUUID(), 'video']);
+      const retry = await value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, next.upload_key, 'video']);
+      assert.equal(retry.id, next.id); assert.equal(retry.reserved, false);
+      assert.equal((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).activeCount, 3);
+    });
+
+    await t.test('legacy over-limit inventory retains data and counts beyond the display page', async () => {
+      const f = await fixture(db);
+      await db.query("insert into peekalo_posts(owner_id,upload_key,kind,status) select $1,gen_random_uuid(),'photo','ready' from generate_series(1,105)", [f.owner]);
+      const inventory = await value(db, 'select peekalo_own_posts($1) as value', [f.owner]);
+      assert.equal(inventory.activeCount, 106); assert.equal(inventory.availableSlots, 0); assert.equal(inventory.items.length, 100);
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, randomUUID(), 'photo']), 'quota');
+      assert.equal(await value(db, "select count(*)::integer as value from peekalo_posts where owner_id=$1 and status='ready'", [f.owner]), 106);
+      assert.deepEqual((await value(db, 'select peekalo_own_posts($1) as value', [f.stranger])).items, []);
+    });
+
+    await t.test('public profiles expose opaque metadata only while owner inventory reports controls', async () => {
+      const f = await fixture(db); const username = `test_${randomUUID().replaceAll('-', '').slice(0, 16)}`;
+      await db.query('insert into peekalo_profiles(id,username) values($1,$2)', [f.owner, username]);
+      await accept(db, f);
+      const profile = await value(db, 'select peekalo_public_profile($1) as value', [username]);
+      assert.equal(profile.username, username); assert.equal(profile.items.length, 1);
+      assert.deepEqual(Object.keys(profile.items[0]).sort(), ['createdAt', 'kind']);
+      const own = (await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).items[0];
+      assert.equal(own.link.state, 'active'); assert.deepEqual(own.recipients, [{ username: f.username, requestState: 'accepted', revoked: false }]);
+      assert(!JSON.stringify(own).includes(f.hash)); assert(!JSON.stringify(own).includes('storage_path'));
+      await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, f.post]);
+      assert.deepEqual((await value(db, 'select peekalo_public_profile($1) as value', [username])).items, []);
+      await failure(() => value(db, 'select peekalo_public_profile($1) as value', ['unknown_fixture']), 'unavailable');
+    });
+
+    await t.test('owner deletion revokes live capabilities and preserves tombstones until cleanup; retries never republish', async () => {
+      const f = await fixture(db); await accept(db, f);
+      const direct = await lease(db, f, { hash: null, post: f.post });
+      const deleted = await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, f.post]);
+      assert.deepEqual(deleted, { storagePath: 'test-only/fixture.jpg' });
+      assert.equal(await value(db, 'select peekalo_post_deleted($1,$2) as value', [f.owner, f.post]), true);
+      assert.equal(await value(db, 'select peekalo_post_deleted($1,$2) as value', [f.stranger, f.post]), false);
+      assert.deepEqual(await value(db, 'select peekalo_delete_post($1,$2) as value', [f.owner, f.post]), deleted);
+      await failure(() => value(db, 'select peekalo_media($1,$2) as value', [f.identity, direct.leaseId]), 'unavailable');
+      await failure(() => lease(db, f), 'unavailable');
+      assert.equal((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).items[0].cleanupPending, true);
+      const uploadKey = await value(db, 'select upload_key as value from peekalo_posts where id=$1', [f.post]);
+      await failure(() => value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner, uploadKey, 'photo']), 'unavailable');
+      assert.equal(await value(db, 'select peekalo_finish_delete($1,$2,$3) as value', [f.stranger, f.post, deleted.storagePath]), false);
+      assert.equal(await value(db, 'select peekalo_finish_delete($1,$2,$3) as value', [f.owner, f.post, 'wrong']), false);
+      assert.equal(await value(db, 'select peekalo_finish_delete($1,$2,$3) as value', [f.owner, f.post, deleted.storagePath]), true);
+      assert.deepEqual((await value(db, 'select peekalo_own_posts($1) as value', [f.owner])).items, []);
+      assert.equal(await value(db, 'select spent_ms as value from peekalo_budgets where post_id=$1', [f.post]), 2000);
+    });
+
     await t.test('public client roles cannot read ledger tables or call privileged functions', async () => {
       const f = await fixture(db);
       const tables = ['profiles', 'posts', 'links', 'link_requests', 'grants', 'budgets', 'leases'];
       const calls = [
         ['peekalo_preview($1)', [f.hash]],
+        ['peekalo_own_posts($1)', [f.owner]],
+        ['peekalo_public_profile($1)', [f.username]],
+        ['peekalo_inbox($1)', [f.recipient]],
+        ['peekalo_view_status($1,$2,$3)', [f.identity, f.hash, null]],
+        ['peekalo_delete_post($1,$2)', [f.owner, f.post]],
+        ['peekalo_post_deleted($1,$2)', [f.owner, f.post]],
+        ['peekalo_finish_delete($1,$2,$3)', [f.owner, f.post, 'test-only/fixture.jpg']],
         ['peekalo_lease($1,$2,$3,$4,$5)', [f.identity, randomUUID(), randomUUID(), f.hash, null]],
         ['peekalo_media($1,$2)', [f.identity, randomUUID()]],
         ['peekalo_reserve_post($1,$2,$3,$4)', [f.owner, randomUUID(), 'photo', 3]],

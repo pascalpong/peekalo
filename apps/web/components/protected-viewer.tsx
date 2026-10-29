@@ -5,11 +5,11 @@ import { FullscreenReveal } from "./fullscreen-reveal";
 import { Icon } from "./icons";
 import styles from "./protected-viewer.module.css";
 
-type Phase = "loading" | "ready" | "requesting" | "revealing" | "hidden" | "exhausted" | "unavailable" | "busy" | "error";
-type ViewerState = { phase: Phase; kind: "photo" | "video"; remainingMs: number; mediaUrl: string | null; mediaTurn: number | null; mediaReady: boolean };
+type Phase = "loading" | "ready" | "requesting" | "revealing" | "hidden" | "exhausted" | "unavailable" | "claimed" | "expired" | "busy" | "error";
+type ViewerState = { phase: Phase; kind: "photo" | "video"; remainingMs: number | null; mediaUrl: string | null; mediaTurn: number | null; mediaReady: boolean };
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string | number };
 type Controls = { start: (input: string, oneSecond?: boolean) => void; stop: () => void; retry: () => void; ready: (turn: number) => void; failed: (turn: number) => void };
-const initial: ViewerState = { phase: "loading", kind: "photo", remainingMs: 10_000, mediaUrl: null, mediaTurn: null, mediaReady: false };
+const initial: ViewerState = { phase: "loading", kind: "photo", remainingMs: null, mediaUrl: null, mediaTurn: null, mediaReady: false };
 
 function statusMessage(phase: Phase) {
   switch (phase) {
@@ -17,7 +17,9 @@ function statusMessage(phase: Phase) {
     case "requesting": return "Preparing your glimpse…";
     case "revealing": return "Revealed · release to hide";
     case "exhausted": return "Your viewing time is used up.";
-    case "unavailable": return "This moment is unavailable or has already been claimed.";
+    case "unavailable": return "This moment is no longer available. Ask the sender for help.";
+    case "claimed": return "This single-use link has already been claimed in another browser. Ask the sender for a new link.";
+    case "expired": return "This link has expired. Ask the sender for a new link.";
     case "busy": return "Another viewing session is active. Try again in a moment.";
     case "error": return "The moment couldn’t load. Check your connection and try again.";
     default: return "Hidden · ready when you are";
@@ -42,7 +44,7 @@ export function ProtectedViewer() {
     let loadingGrants = 0;
     let deadline = 0;
     let renewalWaitStarted: number | null = null;
-    let unreserved = 10_000;
+    let unreserved = 0;
     let current = initial;
     let controller: AbortController | null = null;
     let renewal: ReturnType<typeof setTimeout> | undefined;
@@ -85,22 +87,25 @@ export function ProtectedViewer() {
     });
     const load = async () => {
       stop("loading");
-      unreserved = 10_000;
+      unreserved = 0;
       token = window.location.hash.slice(1);
-      publish({ remainingMs: 10_000 });
+      publish({ remainingMs: null });
       if (!token || token.length > 2_048) { publish({ phase: "unavailable" }); return; }
       const turn = generation;
       const pending = new AbortController();
       controller = pending;
       try {
-        const response = await post("/api/view/preview", { token }, pending.signal);
-        const result: { kind?: string; available?: boolean } = await response.json();
+        const response = await post("/api/view/status", { token }, pending.signal);
+        const result: { kind?: string; state?: string; remainingMs?: number; error?: string } = await response.json();
         if (!mounted || turn !== generation) return;
         controller = null;
-        if (!response.ok || !result.available || (result.kind !== "photo" && result.kind !== "video")) {
-          publish({ phase: "unavailable" }); return;
+        if (!response.ok) { publish({ phase: result.error === "already_claimed" ? "claimed" : result.error === "expired" ? "expired" : [403, 404, 410].includes(response.status) ? "unavailable" : "error" }); return; }
+        if (!(["available", "exhausted"].includes(result.state ?? "")) || (result.kind !== "photo" && result.kind !== "video")) {
+          publish({ phase: "error" }); return;
         }
-        publish({ phase: "ready", kind: result.kind });
+        if (!Number.isInteger(result.remainingMs) || result.remainingMs! < 0 || result.remainingMs! > 10_000 || (result.state === "exhausted") !== (result.remainingMs === 0)) { publish({ phase: "error" }); return; }
+        unreserved = result.remainingMs!;
+        publish({ phase: unreserved === 0 ? "exhausted" : "ready", kind: result.kind, remainingMs: unreserved });
       } catch {
         if (mounted && turn === generation) { controller = null; publish({ phase: "error" }); }
       }
@@ -206,7 +211,7 @@ export function ProtectedViewer() {
       failed: turn => { if (mounted && holding && generation === turn && current.mediaTurn === turn) stop("error"); },
     };
     const suspend = () => { if (holding) stop(); };
-    const visibility = () => { if (document.visibilityState !== "visible") suspend(); };
+    const visibility = () => { if (document.visibilityState !== "visible") suspend(); else if (!holding) void load(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") suspend(); };
     const hashChanged = () => { void load(); };
     window.addEventListener("blur", suspend);
@@ -229,12 +234,12 @@ export function ProtectedViewer() {
   }, []);
 
   const revealed = state.phase === "revealing" && state.mediaReady && state.mediaUrl !== null;
-  const disabled = ["loading", "exhausted", "unavailable", "error"].includes(state.phase);
-  const seconds = (Math.ceil(state.remainingMs / 100) / 10).toFixed(1);
+  const disabled = ["loading", "exhausted", "unavailable", "claimed", "expired", "error"].includes(state.phase);
+  const seconds = state.remainingMs === null ? null : (Math.ceil(state.remainingMs / 100) / 10).toFixed(1);
   const stop = useCallback(() => { controls.current?.stop(); }, []);
 
   return <section className={styles.viewer} aria-label="Private shared moment">
-    <div className={styles.meta}><span>ONE MOMENT · ONE VIEWER</span><span className={styles.time} aria-label={`${seconds} seconds remaining`}>{seconds}s left</span></div>
+    <div className={styles.meta}><span>ONE MOMENT · ONE VIEWER</span><span className={styles.time} aria-label={seconds === null ? "Checking viewing time" : `${seconds} seconds remaining`}>{seconds === null ? "Checking viewing time…" : `${seconds}s left`}</span></div>
     <button className={styles.surface} type="button" disabled={disabled} aria-label={revealed ? "Moment revealed. Release to hide." : "Hold to reveal this moment"} aria-describedby="protected-instructions" onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         if (!event.isPrimary || event.button !== 0) return;
@@ -256,9 +261,9 @@ export function ProtectedViewer() {
         if (event.key === " " || event.key === "Enter") event.preventDefault();
         if (input.current === `key:${event.key}`) stop();
       }}>
-      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || state.phase === "unavailable" ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : state.phase === "unavailable" ? "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
+      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || ["unavailable", "claimed", "expired"].includes(state.phase) ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : ["unavailable", "claimed", "expired"].includes(state.phase) ? state.phase === "claimed" ? "This link is already claimed." : state.phase === "expired" ? "This link has expired." : "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
     </button>
-    {state.mediaUrl !== null && <FullscreenReveal seconds={seconds} onDismiss={stop} visible={revealed}>
+    {state.mediaUrl !== null && <FullscreenReveal seconds={seconds ?? "0.0"} onDismiss={stop} visible={revealed}>
       {state.kind === "photo" && (
         // eslint-disable-next-line @next/next/no-img-element -- Private media uses the cookie-authorized gateway only during an active lease; never Next image caching.
         <img src={state.mediaUrl!} alt="Shared photo" className={styles.media} draggable={false} referrerPolicy="no-referrer" onLoad={async event => {

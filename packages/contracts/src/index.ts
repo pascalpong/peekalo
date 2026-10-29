@@ -1,8 +1,8 @@
-/** These limits are descriptive until server authorization is implemented. */
+/** Product limits; authorization and quota reservations are enforced server-side. */
 export const REVEAL_BUDGET_MS = 10_000;
 export const MAX_VIDEO_DURATION_MS = 10_000;
 
-/** Proposed default, not a confirmed lifetime-upload or attachment limit. */
-export const PROVISIONAL_ACTIVE_MEDIA_LIMIT = 3;
+/** Three active moments per account; deletion frees a slot (D-25). */
+export const ACTIVE_MEDIA_LIMIT = 3;
 
 export type MediaKind = 'photo' | 'video';

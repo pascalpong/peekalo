@@ -18,7 +18,6 @@ test('valid HTTPS configuration and explicit loopback origins', () => {
   for (const url of ['http://127.0.0.1:4000', 'http://localhost:3000', 'http://[::1]:4000', 'https://peekalo.example/']) {
     assert.equal(validateHostingEnvironment({ ...fixture, PUBLIC_APP_URL: url }).appUrl, new URL(url).origin);
   }
-  for (const quota of ['1', '3', '99']) validateHostingEnvironment({ ...fixture, PEEKALO_ACTIVE_POST_LIMIT: quota });
 });
 
 test('every required value must be present and secret must be long enough', () => {
@@ -41,11 +40,7 @@ test('rejects unsafe, ambiguous or non-origin app URLs', () => {
   }
 });
 
-test('rejects malformed optional quotas instead of silently disabling them', () => {
-  for (const quota of ['', '0', '03', '-1', '100', '3.5', ' 3', 'no']) {
-    assert.throws(() => validateHostingEnvironment({ ...fixture, PEEKALO_ACTIVE_POST_LIMIT: quota }));
-  }
-});
+// D-25 fixes admission at three in SQL; retired env overrides have no effect.
 
 test('CLI failures expose no configuration values or dependency stderr', () => {
   const script = fileURLToPath(new URL('./check-hosting-runtime.mjs', import.meta.url));

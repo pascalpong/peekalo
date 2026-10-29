@@ -396,3 +396,10 @@ test('video preparation failures preserve their code and show safe retry guidanc
     assert.deepEqual(h.logs, []);
   }
 });
+
+
+test('a capture request pinned to another account never sends its upload or grant', async () => {
+  const h = harness();
+  await assert.rejects(h.api.apiRequest('/api/posts', { method: 'POST', body: {}, expectedAccountId: 'previous-user' }), error => error.code === 'account_changed');
+  assert.equal(h.calls.length, 1); assert(h.calls[0][0].endsWith('/config'));
+});

@@ -113,9 +113,10 @@ try {
       assert.equal(await finish(db, post, stranger), false);
       assert.equal(await finish(db, post, id, `${id}/${post.id}.jpg`), false);
       assert.equal(await finish(db, post, id, `${id}/${post.id}/${post.upload_attempt}.mp4`), false);
-      await db.query("update peekalo_posts set status='deleted' where id=$1", [post.id]);
+      await value(db, 'select peekalo_delete_post($1,$2) as value', [id, post.id]);
+      assert.equal(await value(db, 'select peekalo_post_deleted($1,$2) as value', [id, post.id]), true);
       assert.equal(await finish(db, post), false); assert.equal(await fail(db, post), false);
-      assert.equal((await reserve(db, id, post.upload_key)).status, 'deleted');
+      await assert.rejects(reserve(db, id, post.upload_key), { message: 'unavailable' });
     });
     await t.test('failed retry gets a new token and ready retry preserves revoked links', async () => {
       const post = await reserve(db, await owner(db)); assert.equal(await fail(db, post), true);

@@ -42,7 +42,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(t, { missingAttempt = false, finish = () => true, fail = () => true, uploadError = false, beforeRead } = {}) {
+function fixture(t, { missingAttempt = false, finish = () => true, fail = () => true, uploadError = false, deleted = false, beforeRead } = {}) {
   const events = []; const calls = []; const writes = []; const removals = []; const cached = [];
   const admission = load(admissionSource, { 'node:timers': timers, 'node:perf_hooks': perf });
   t.after(() => {
@@ -50,6 +50,7 @@ function fixture(t, { missingAttempt = false, finish = () => true, fail = () => 
     release();
   });
   const handlers = load(handlerSource, {
+    '@peekalo/contracts': { ACTIVE_MEDIA_LIMIT: 3 },
     './sharing': {
       ...sharing,
       account: async () => owner,
@@ -65,6 +66,7 @@ function fixture(t, { missingAttempt = false, finish = () => true, fail = () => 
         if (name === 'peekalo_reserve_post') return { id: postId, status: 'uploading', reserved: true, ...(!missingAttempt ? { upload_attempt: attempt } : {}) };
         if (name === 'peekalo_finish_upload') return finish();
         if (name === 'peekalo_fail_upload') return fail();
+        if (name === 'peekalo_post_deleted') return deleted;
         assert.fail('Unexpected upload RPC');
       },
     },
@@ -106,6 +108,7 @@ test('normal publication uses an attempt-scoped non-overwriting object and fence
   assert.deepEqual(f.writes, [[expectedPath, normalized, { contentType: 'image/jpeg', upsert: false, cacheControl: '0' }]]);
   assert.deepEqual(f.calls.find(call => call.name === 'peekalo_finish_upload').args,
     { p_owner: owner, p_post: postId, p_attempt: attempt, p_path: expectedPath });
+  assert.equal(f.calls[0].args.p_limit, 3, 'The gateway always sends the confirmed active moment cap');
   assert.deepEqual(f.cached, [[expectedPath, 'photo', normalized]]);
   assert.deepEqual(f.removals, []);
 });
@@ -115,7 +118,7 @@ test('a lost finish reply cannot delete bytes when the failure fence says public
   const response = await f.send(f.request());
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: 'sharing_unavailable' });
-  assert.deepEqual(f.events, ['acquire', 'read-body', 'peekalo_reserve_post', 'normalize', 'upload', 'peekalo_finish_upload', 'peekalo_fail_upload']);
+  assert.deepEqual(f.events, ['acquire', 'read-body', 'peekalo_reserve_post', 'normalize', 'upload', 'peekalo_finish_upload', 'peekalo_fail_upload', 'peekalo_post_deleted']);
   assert.deepEqual(f.calls.find(call => call.name === 'peekalo_fail_upload').args, { p_owner: owner, p_post: postId, p_attempt: attempt });
   assert.deepEqual(f.removals, []);
   assert.deepEqual(f.cached, []);
@@ -128,6 +131,30 @@ test('confirmed failed publication removes only its own attempt-scoped object', 
   assert.deepEqual(await response.json(), { error: 'conflict' });
   assert.deepEqual(f.events.slice(-3), ['peekalo_finish_upload', 'peekalo_fail_upload', 'remove']);
   assert.deepEqual(f.removals, [[expectedPath]]);
+  assert.deepEqual(f.cached, []);
+});
+
+test('deletion during upload rejects publication and removes only the late attempt object despite fail=false', async t => {
+  const f = fixture(t, { finish: () => false, fail: () => false });
+  const response = await f.send(f.request());
+  assert.equal(response.status, 409);
+  assert.deepEqual(f.removals, [[expectedPath]]);
+  assert.deepEqual(f.cached, []);
+});
+
+test('definitive publication rejection still cleans its own object when the failure-fence request fails', async t => {
+  const f = fixture(t, { finish: () => false, fail: () => { throw new Error('synthetic failure-fence outage'); } });
+  const response = await f.send(f.request());
+  assert.equal(response.status, 409);
+  assert.deepEqual(f.removals, [[expectedPath]]);
+});
+
+test('an ambiguous Storage write error after owner deletion removes only the deleted attempt object', async t => {
+  const f = fixture(t, { uploadError: true, fail: () => false, deleted: true });
+  const response = await f.send(f.request());
+  assert.equal(response.status, 503);
+  assert.deepEqual(f.removals, [[expectedPath]]);
+  assert.equal(f.calls.at(-1).name, 'peekalo_post_deleted');
   assert.deepEqual(f.cached, []);
 });
 

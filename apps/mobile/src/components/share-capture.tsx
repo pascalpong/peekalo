@@ -3,7 +3,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, SharingError, signInWithGoogle, signInWithApple, type AuthProviders } from '../lib/sharing-client';
+import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, resolveApiUrl, SharingError, signInWithGoogle, signInWithApple, type AuthProviders } from '../lib/sharing-client';
 import { AppleSignIn } from './apple-sign-in';
 import { requestEmailConfirmation, subscribeEmailConfirmation } from '../lib/auth-confirmation';
 import { colors, tokens } from './ui';
@@ -17,7 +17,7 @@ type Props = {
   onBusyChange?: (busy: boolean) => void;
 };
 type Stage = 'connecting' | 'unavailable' | 'auth' | 'username' | 'ready';
-type Draft = { uri: string; uploadKey: string; linkKey: string; postId?: string; link?: string; userId?: string };
+type Draft = { uri: string; uploadKey: string; linkKey: string; postId?: string; link?: string; linkExpiresAt?: number; userId?: string };
 
 export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props) {
   const [stage, setStage] = useState<Stage>('connecting');
@@ -32,6 +32,9 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   const [recipient, setRecipient] = useState('');
   const [hasLink, setHasLink] = useState(false);
   const [lastRecipient, setLastRecipient] = useState('');
+  const [uploaded, setUploaded] = useState(false);
+  const [retry, setRetry] = useState<{ action: 'link' | 'recipient' | 'revokeLink' | 'revokeRecipient'; username?: string } | null>(null);
+  const accountId = useRef<string | null | undefined>(undefined);
   const [providers, setProviders] = useState<AuthProviders>({ google: null, email: null });
   const operation = useRef<AbortController | null>(null);
   const draft = useRef<Draft | null>(null);
@@ -70,7 +73,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     if (draft.current?.uri !== captureUri) {
       cancelOperation(); setBusy(false);
       draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
-      setHasLink(false); setLastRecipient(''); setNotice(''); setError(''); setRecipient('');
+      setHasLink(false); setLastRecipient(''); setNotice(''); setError(''); setRecipient(''); setUploaded(false); setRetry(null);
     }
   }, [captureUri]);
 
@@ -98,6 +101,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     const { data, error: sessionError } = await client.auth.getSession();
     if (sessionError) throw new SharingError('Your sign-in could not be restored. Please try again.');
     if (!current()) return;
+    accountId.current = data.session?.user.id ?? null;
     if (!data.session) {
       const available = await getAuthProviders(signal);
       if (current()) { setProviders(available); setStage('auth'); }
@@ -105,9 +109,9 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     }
     if (draft.current && draft.current.userId !== data.session.user.id) {
       draft.current = { uri: draft.current.uri, userId: data.session.user.id, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() };
-      setHasLink(false); setLastRecipient(''); setRecipient('');
+      setHasLink(false); setLastRecipient(''); setRecipient(''); setUploaded(false); setRetry(null);
     }
-    const profile = await apiRequest<{ username: string | null }>('/api/profile', { signal });
+    const profile = await apiRequest<{ username: string | null }>('/api/profile', { signal, expectedAccountId: data.session.user.id });
     if (current()) { setUsername(profile.username ?? ''); setStage(profile.username ? 'ready' : 'username'); }
   }
 
@@ -123,6 +127,29 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     if (visible) connect();
     else { cancelOperation(); setBusy(false); setProgress(''); setPassword(''); }
     // A capture's retry keys and uploaded post survive closing/reopening this modal.
+  }, [visible, captureUri]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const setup = new AbortController();
+    let unsubscribe: (() => void) | undefined;
+    void getSharingClient(setup.signal).then(client => {
+      if (setup.signal.aborted) return;
+      const { data } = client.auth.onAuthStateChange((_event, session) => {
+        if (setup.signal.aborted) return;
+        const next = session?.user.id ?? null;
+        const changed = accountId.current !== undefined && next !== accountId.current;
+        accountId.current = next;
+        // Own login commits are serialized by sharing-client and loadAccount.
+        if (!changed || committingRef.current) return;
+        cancelOperation(); setBusy(false); setUploaded(false); setRetry(null);
+        draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
+        setHasLink(false); setLastRecipient(''); setRecipient(''); setUsername('');
+        void Promise.resolve().then(() => { if (!setup.signal.aborted) connect(); });
+      });
+      unsubscribe = () => data.subscription.unsubscribe();
+    }).catch(() => undefined);
+    return () => { setup.abort(); unsubscribe?.(); };
   }, [visible, captureUri]);
 
   function authenticate() {
@@ -184,7 +211,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     void run(async (current, signal) => {
       const name = username.trim().toLowerCase().replace(/^@/, '');
       if (!/^[a-z0-9_]{3,24}$/.test(name)) throw new SharingError('Use 3–24 letters, numbers or underscores.');
-      await apiRequest('/api/profile', { method: 'POST', body: { username: name }, signal });
+      await apiRequest('/api/profile', { method: 'POST', body: { username: name }, signal, expectedAccountId: accountId.current ?? undefined });
       if (current()) { setUsername(name); setStage('ready'); }
     });
   }
@@ -198,27 +225,47 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     form.append('kind', capture.kind);
     form.append('file', { uri: capture.uri, name: capture.kind === 'photo' ? 'capture.jpg' : 'capture.mp4', type: capture.kind === 'photo' ? 'image/jpeg' : 'video/mp4' } as unknown as Blob);
     const post = await apiRequest<{ postId: string; status: string }>('/api/posts', {
-      method: 'POST', body: form, headers: { 'Idempotency-Key': currentDraft.uploadKey }, signal,
+      method: 'POST', body: form, headers: { 'Idempotency-Key': currentDraft.uploadKey }, signal, expectedAccountId: currentDraft.userId,
     });
     if (!current()) throw new SharingError('This capture changed. Please try again.');
     if (post.status !== 'ready' || !post.postId) throw new SharingError('This capture is not ready to share. Please try again.');
     currentDraft.postId = post.postId;
+    setUploaded(true);
     return currentDraft;
   }
 
   function createLink() {
+    setRetry({ action: 'link' });
     void run(async (current, signal) => {
       const currentDraft = await upload(current, signal);
       if (!current()) return;
-      if (!currentDraft.link) {
-        setProgress('Creating your private link…');
-        const link = await apiRequest<{ url: string; expiresAt: string }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/link`, {
-          method: 'POST', headers: { 'Idempotency-Key': currentDraft.linkKey }, body: {}, signal,
+      if (currentDraft.link && currentDraft.linkExpiresAt !== undefined && currentDraft.linkExpiresAt <= Date.now()) {
+        delete currentDraft.link; delete currentDraft.linkExpiresAt;
+        currentDraft.linkKey = newIdempotencyKey(); setHasLink(false);
+        throw new SharingError('That link has expired. Tap Create a single-use link again to create a new one.', 'expired');
+      }
+      {
+        setProgress(currentDraft.link ? 'Checking your link…' : 'Creating your private link…');
+        const link = await apiRequest<{ url: string; expiresAt: string; state?: string }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/link`, {
+          method: 'POST', headers: { 'Idempotency-Key': currentDraft.linkKey }, body: {}, signal, expectedAccountId: currentDraft.userId,
         });
         if (!current()) return;
         const parsed = new URL(link.url);
-        if (!/^https?:$/.test(parsed.protocol) || !parsed.hash) throw new SharingError('The link could not be created. Please try again.');
+        if (parsed.origin !== new URL(resolveApiUrl('/')).origin || parsed.pathname !== '/s/view' || parsed.search || !/^#[A-Za-z0-9_-]{43}$/.test(parsed.hash)) throw new SharingError('The link could not be created. Please try again.');
+        const expires = Date.parse(link.expiresAt);
+        if (!Number.isFinite(expires)) throw new SharingError('The link could not be confirmed. Please try again.');
+        if (link.state === 'revoked') {
+          delete currentDraft.link; delete currentDraft.linkExpiresAt;
+          currentDraft.linkKey = newIdempotencyKey(); setHasLink(false);
+          throw new SharingError('That link was revoked. Tap Create a single-use link again to create a new one.');
+        }
+        if (expires <= Date.now() || link.state === 'expired') {
+          delete currentDraft.link; delete currentDraft.linkExpiresAt; setHasLink(false);
+          currentDraft.linkKey = newIdempotencyKey();
+          throw new SharingError('That link has expired. Tap Create a single-use link again to create a new one.', 'expired');
+        }
         currentDraft.link = link.url;
+        currentDraft.linkExpiresAt = expires;
         setHasLink(true);
       }
       if (!current()) return;
@@ -228,14 +275,16 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     });
   }
 
-  function sendToRecipient() {
+  function sendToRecipient(retryName?: string) {
+    const requested = retryName ?? recipient;
+    setRetry({ action: 'recipient', username: requested });
     void run(async (current, signal) => {
-      const name = recipient.trim().toLowerCase().replace(/^@/, '');
+      const name = requested.trim().toLowerCase().replace(/^@/, '');
       if (!/^[a-z0-9_]{3,24}$/.test(name)) throw new SharingError('Enter a valid Peekalo username.');
       const currentDraft = await upload(current, signal);
       if (!current()) return;
       setProgress('Sharing with your recipient…');
-      const result = await apiRequest<{ requestState: 'pending' | 'accepted' }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/recipients`, { method: 'POST', body: { username: name }, signal });
+      const result = await apiRequest<{ requestState: 'pending' | 'accepted' }>(`/api/posts/${encodeURIComponent(currentDraft.postId!)}/recipients`, { method: 'POST', body: { username: name }, signal, expectedAccountId: currentDraft.userId });
       if (result.requestState !== 'pending' && result.requestState !== 'accepted') throw new SharingError('This share was not confirmed. Please try again.');
       if (current()) setLastRecipient(name);
       if (current()) setNotice(result.requestState === 'pending' ? `Request sent to @${name}. They must accept before they can reveal it.` : `Shared with @${name}. It is available in their Peekalo Inbox.`);
@@ -243,12 +292,13 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
   }
 
   function revokeLink() {
+    setRetry({ action: 'revokeLink' });
     void run(async (current, signal) => {
       const value = draft.current;
       if (!value?.postId) return;
-      await apiRequest(`/api/posts/${value.postId}/link`, { method: 'DELETE', signal });
+      await apiRequest(`/api/posts/${value.postId}/link`, { method: 'DELETE', signal, expectedAccountId: value.userId });
       if (current()) {
-        delete value.link;
+        delete value.link; delete value.linkExpiresAt;
         value.linkKey = newIdempotencyKey();
         setHasLink(false);
         setNotice('Link revoked. New viewing requests are blocked.');
@@ -256,10 +306,11 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
     });
   }
   function revokeRecipient() {
+    setRetry({ action: 'revokeRecipient' });
     void run(async (current, signal) => {
       const value = draft.current;
       if (!value?.postId || !lastRecipient) return;
-      await apiRequest(`/api/posts/${value.postId}/recipients`, { method: 'DELETE', body: { username: lastRecipient }, signal });
+      await apiRequest(`/api/posts/${value.postId}/recipients`, { method: 'DELETE', body: { username: lastRecipient }, signal, expectedAccountId: value.userId });
       if (current()) { setLastRecipient(''); setNotice('Recipient access revoked.'); }
     });
   }
@@ -270,7 +321,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
       if (signOutError) throw new SharingError('Sign-out did not finish. Please try again.');
       if (current()) {
         draft.current = captureUri ? { uri: captureUri, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() } : null;
-        setHasLink(false); setLastRecipient(''); setRecipient(''); setUsername(''); setPassword('');
+        setHasLink(false); setLastRecipient(''); setRecipient(''); setUploaded(false); setRetry(null); setUsername(''); setPassword('');
         setStage('auth'); setNotice('Signed out on this device.');
         const available = await getAuthProviders(signal);
         if (current()) setProviders(available);
@@ -319,11 +370,11 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
           </View>}
           {stage === 'ready' && <View style={styles.section}>
             <Text style={styles.signedIn}>Signed in as @{username}</Text>
-            {capture ? <><View style={styles.option}><Feather name="send" size={25} color={colors.text} /><Text style={styles.heading}>Send on Peekalo</Text>
+            {capture ? <><Text style={styles.body}>Three active moments per account. Deleting a moment in Profile frees a slot. Failed uploads and retries do not create extra moments.</Text><View style={styles.option}><Feather name="send" size={25} color={colors.text} /><Text style={styles.heading}>Send on Peekalo</Text>
               <Text style={styles.body}>Your recipient accepts this moment in their Inbox before viewing.</Text>
               <TextInput style={styles.input} accessibilityLabel="Recipient username" placeholder="@username" placeholderTextColor={colors.muted} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} maxLength={25} editable={!busy} />
               {lastRecipient && <Action secondary label={`Revoke @${lastRecipient} access`} onPress={revokeRecipient} disabled={busy} />}
-              <Action label="Send to recipient" onPress={sendToRecipient} disabled={busy || !recipient.trim()} />
+              <Action label="Send to recipient" onPress={() => sendToRecipient()} disabled={busy || !recipient.trim()} />
             </View>
             <View style={styles.option}><Feather name="link" size={25} color={colors.text} /><Text style={styles.heading}>Create a single-use link</Text>
               <Text style={styles.body}>The first person to deliberately reveal claims the link. They get ten seconds total. Anyone who receives the link can be that first viewer. Browsers can save revealed media.</Text>
@@ -332,7 +383,15 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
             </View></> : <View style={styles.option}><Text style={styles.heading}>You’re ready, @{username}.</Text><Text style={styles.body}>Moments shared with you appear in Inbox.</Text><Action label="Done" onPress={close} disabled={busy} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></View>}
           </View>}
           {busy && stage !== 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text accessibilityLiveRegion="polite" style={styles.body}>{progress || 'Please wait…'}</Text></View>}
-          {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+          {!!error && <><Text accessibilityRole="alert" style={styles.error}>{error}</Text>
+            {capture && stage === 'ready' && <Text style={styles.body}>{uploaded ? 'Your moment is saved in Profile. The action above was not confirmed; retrying uses that same moment.' : 'Your capture is kept while this sharing screen is available. Retrying uses the same upload; it does not create another moment.'}</Text>}
+            {retry && stage === 'ready' && <Action secondary label="Try the same action again" disabled={busy} onPress={() => {
+              if (retry.action === 'link') createLink();
+              else if (retry.action === 'recipient') sendToRecipient(retry.username);
+              else if (retry.action === 'revokeLink') revokeLink();
+              else revokeRecipient();
+            }} />}
+          </>}
           {!!notice && <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text>}
         </ScrollView>
       </KeyboardAvoidingView>
