@@ -7,7 +7,9 @@ const nextConfig: NextConfig = {
   transpilePackages: ['@peekalo/contracts', '@peekalo/design', '@peekalo/reveal', '@peekalo/web-ui'],
   poweredByHeader: false,
   async headers() {
-    return [{ source: '/:path*', headers: [
+    return [
+      ...['/privacy', '/terms', '/support', '/delete-account'].map(source => ({ source, headers: [{ key: 'Cache-Control', value: 'private, no-store, max-age=0' }] })),
+      { source: '/:path*', headers: [
       { key: 'Referrer-Policy', value: 'no-referrer' },
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'X-Robots-Tag', value: 'noindex, nofollow' },

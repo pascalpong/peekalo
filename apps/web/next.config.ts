@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/auth/:path*", headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }] },
-      ...["/u/:path*", "/operator/:path*", "/safety", "/support"].map(source => ({ source, headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }] })),
+      ...["/u/:path*", "/operator/:path*", "/safety", "/support", "/privacy", "/terms", "/delete-account"].map(source => ({ source, headers: [{ key: "Cache-Control", value: "private, no-store, max-age=0" }] })),
       {
         source: "/:path*",
         headers: [

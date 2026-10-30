@@ -24,7 +24,7 @@
     "test:waitlist": "node --test scripts/test-waitlist.mjs",
     "test:reveal": "pnpm --filter @peekalo/reveal test && node --test scripts/test-protected-viewer.mjs scripts/test-fullscreen-reveal.mjs",
     "test:sharing": "node --env-file=apps/web/.env.local scripts/test-sharing-backend.mjs",
-    "test:backend": "node --test scripts/test-backend-ledger.mjs scripts/test-media-controls-handlers.mjs scripts/test-safety-handlers.mjs scripts/test-safety-web.mjs",
+    "test:backend": "node --test scripts/test-backend-ledger.mjs scripts/test-media-controls-handlers.mjs scripts/test-safety-handlers.mjs scripts/test-safety-web.mjs scripts/test-account-privacy.mjs scripts/test-account-cleanup.mjs scripts/test-deletion-web.mjs",
     "dev:site": "pnpm --filter @peekalo/site dev",
     "build:site": "pnpm --filter @peekalo/site build",
     "build:web": "pnpm --filter @peekalo/web build",

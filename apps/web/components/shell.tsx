@@ -25,7 +25,7 @@ export async function Shell({ children, viewer = false }: { children: ReactNode;
       {children}
       <footer className="site-footer">
         <span>A little glimpse. A little closer.</span>
-        <span className="footer-note">Peekalo web app<Link href="/safety">Safety</Link><Link href="/support">Support</Link>{about && <a href={about}>About Peekalo <span aria-hidden="true">↗</span></a>}</span>
+        <span className="footer-note">Peekalo web app<Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/delete-account">Delete account</Link><Link href="/safety">Safety</Link><Link href="/support">Support</Link>{about && <a href={about}>About Peekalo <span aria-hidden="true">↗</span></a>}</span>
       </footer>
     </div>
   );

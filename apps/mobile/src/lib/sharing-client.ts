@@ -325,7 +325,7 @@ function googleCallbackCode(raw: string, flowId: string) {
 }
 
 /** Returns false when the person closes the Google sheet without signing in. */
-export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitListener): Promise<boolean> {
+export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitListener, expectedAccountId?: string): Promise<boolean> {
   if (googleAttemptActive || appleAttemptActive) throw new SharingError('Google sign-in is already open. Finish or close it before trying again.');
   googleAttemptActive = true;
   const revision = ++accountAuthRevision;
@@ -375,7 +375,9 @@ export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitLi
     current();
     const session = exchanged.data.session;
     if (exchanged.error || !session) throw new SharingError('Google sign-in did not finish. Please try again.');
+    if (expectedAccountId && session.user.id !== expectedAccountId) throw new SharingError('Use the same account to confirm deletion.', 'account_changed');
     await commitAccountAuth(async client => {
+      if (expectedAccountId && (await client.auth.getSession()).data.session?.user.id !== expectedAccountId) throw new SharingError('Your account changed. Reopen deletion before continuing.', 'account_changed');
       const committed = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
       if (committed.error || !committed.data.session) throw new SharingError('Google sign-in did not finish. Please try again.');
     }, signal, onCommit, revision);
@@ -390,7 +392,7 @@ export async function signInWithGoogle(signal?: AbortSignal, onCommit?: CommitLi
 }
 
 /** Native Apple exchange stays isolated until the same serialized commit as Google. */
-export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitListener): Promise<boolean> {
+export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitListener, expectedAccountId?: string, onAuthorizationCode?: (code: string) => void): Promise<boolean> {
   if (googleAttemptActive || appleAttemptActive) throw new SharingError('Sign-in is already open. Finish or close it before trying again.');
   appleAttemptActive = true;
   const revision = ++accountAuthRevision;
@@ -418,10 +420,14 @@ export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitLis
     current();
     const session = exchanged.data.session;
     if (exchanged.error || !session) throw new SharingError('Apple sign-in did not finish. Please try again.');
+    if (expectedAccountId && session.user.id !== expectedAccountId) throw new SharingError('Use the same account to confirm deletion.', 'account_changed');
     await commitAccountAuth(async client => {
+      if (expectedAccountId && (await client.auth.getSession()).data.session?.user.id !== expectedAccountId) throw new SharingError('Your account changed. Reopen deletion before continuing.', 'account_changed');
       const result = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
       if (result.error || !result.data.session) throw new SharingError('Apple sign-in did not finish. Please try again.');
     }, signal, onCommit, revision);
+    current();
+    if (credential.authorizationCode) onAuthorizationCode?.(credential.authorizationCode);
     return true;
   } catch (error) {
     current();
@@ -431,7 +437,37 @@ export async function signInWithApple(signal?: AbortSignal, onCommit?: CommitLis
   } finally { isolated?.auth.stopAutoRefresh(); appleAttemptActive = false; }
 }
 
+/** Password proof is isolated and can only refresh the account being deleted. */
+export async function reauthenticateForDeletion(accountId: string, password: string, signal?: AbortSignal) {
+  const ordinary = await getSharingClient(signal);
+  const existing = await ordinary.auth.getSession();
+  checkCancelled(signal);
+  if (existing.error || existing.data.session?.user.id !== accountId || !existing.data.session.user.email) throw new SharingError('Your account changed. Reopen deletion before continuing.', 'account_changed');
+  const revision = ++accountAuthRevision;
+  const isolated = createClient(authConfig!.supabaseUrl, authConfig!.supabaseAnonKey, {
+    global: { fetch: (input, init) => authFetch(input, init, signal) },
+    auth: { storageKey: `delete-proof-${Crypto.randomUUID()}`, persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, lock: processLock },
+  });
+  isolated.auth.stopAutoRefresh();
+  try {
+    const result = await isolated.auth.signInWithPassword({ email: existing.data.session.user.email, password });
+    checkCancelled(signal);
+    const proof = result.data.session;
+    if (result.error || !proof) throw new SharingError('Password confirmation did not finish. Check your password or use your sign-in provider.', 'recent_auth_required');
+    if (proof.user.id !== accountId) throw new SharingError('Use the same account to confirm deletion.', 'account_changed');
+    await commitAccountAuth(async client => {
+      if ((await client.auth.getSession()).data.session?.user.id !== accountId) throw new SharingError('Your account changed. Reopen deletion before continuing.', 'account_changed');
+      const committed = await client.auth.setSession({ access_token: proof.access_token, refresh_token: proof.refresh_token });
+      if (committed.error || !committed.data.session) throw new SharingError('Password confirmation did not finish. Please try again.');
+    }, signal, undefined, revision);
+  } finally { isolated.auth.stopAutoRefresh(); }
+}
+
 const errorMessages: Record<string, string> = {
+  recent_auth_required: 'Confirm your password or sign in again with the same provider, then retry deletion.',
+  terms_required: 'Read and accept the current terms before continuing.',
+  policy_unavailable: 'Peekalo policies are still being prepared. Sharing is closed until they are published.',
+  account_deleting: 'Account deletion is pending. Your account access is disabled.',
   unauthorized: 'Please sign in again to continue.',
   sign_in_required: 'Please sign in again to continue.',
   username_reserved: 'That username is reserved for Peekalo’s sample profile. Please choose another.',
@@ -503,8 +539,8 @@ export async function apiRequest<T>(path: string, options: {
   const result = await response.json().catch(() => null);
   checkCancelled(options.signal);
   if (!response.ok) {
-    const code = response.status === 401 ? 'unauthorized' : typeof result?.error === 'string' ? result.error : typeof result?.code === 'string' ? result.code : 'unavailable';
-    throw new SharingError(response.status === 401 ? errorMessages.unauthorized : errorMessages[code] ?? 'This action did not finish. Please try again.', code);
+    const code = typeof result?.error === 'string' ? result.error : typeof result?.code === 'string' ? result.code : response.status === 401 ? 'unauthorized' : 'unavailable';
+    throw new SharingError(errorMessages[code] ?? 'This action did not finish. Please try again.', code);
   }
   return result as T;
 }

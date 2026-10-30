@@ -314,3 +314,9 @@ h1, h2 { font-family: var(--display-font); font-weight: 700; }
 .operator-media { width: min(100%, 360px); margin-block: 16px; background: var(--pk-color-background); }
 .operator-media img, .operator-media video { width: 100%; max-height: 640px; object-fit: contain; display: block; }
 @media (max-width: 540px) { .safety-main { margin-block: 32px; } .safety-panel { padding: 18px; } .safety-actions > button { flex: 1 1 160px; } }
+
+.policy-links { display: flex; flex-wrap: wrap; gap: 12px 24px; border-top: 1px solid var(--line); padding-top: 24px; margin-top: 36px; font-size: 13px; }
+.deletion-check { display: flex !important; align-items: start; gap: 12px !important; }
+.deletion-check input { min-height: 24px; width: 24px; flex-shrink: 0; margin-top: 3px; }
+.site-footer .footer-note { display: flex; flex-wrap: wrap; gap: 12px 18px; justify-content: end; }
+.site-footer .footer-note > a { margin-left: 0; }

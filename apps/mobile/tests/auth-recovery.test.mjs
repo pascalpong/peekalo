@@ -103,6 +103,7 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
     '@expo/vector-icons/AntDesign': { default: 'AntDesign' }, '@expo/vector-icons/Feather': { default: 'Feather' },
     'expo-router': { Stack: { Screen: 'StackScreen' }, useFocusEffect: callback => { focusEffect = callback; }, router: { replace: path => navigation.push(path) } },
     '../components/ui': { colors: {}, Screen: 'Screen', tokens: { font: {} } },
+    './account-privacy': { TermsAcceptance: 'TermsAcceptance' },
     './apple-sign-in': { AppleSignIn: 'AppleSignIn' },
     './ui': { colors: {}, tokens: { font: {} } }, './brand': { BrandLogo: 'BrandLogo' },
   };
@@ -110,7 +111,7 @@ function harness({ store = new Map(), exchange, update, request, marker = 'recov
   const context = vm.createContext({ URL: globalThis.URL, AbortController: globalThis.AbortController, FormData: globalThis.FormData, Promise, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     process: { env: { EXPO_PUBLIC_API_URL: 'https://api.example.invalid', ...env } }, __DEV__: true,
     console: { log: (...args) => logs.push(args), warn: (...args) => logs.push(args), error: (...args) => logs.push(args) },
-    fetch: async (url, options) => profileRequest && url.endsWith('/api/profile') ? profileRequest(options) : url.endsWith('/config')
+    fetch: async (url, options) => url.endsWith('/api/account/privacy') ? globalThis.Response.json({ accepted: true, policyReady: true, deletionStatus: null }) : profileRequest && url.endsWith('/api/profile') ? profileRequest(options) : url.endsWith('/config')
       ? globalThis.Response.json({ ready: true, supabaseUrl: 'https://auth.example.invalid', supabaseAnonKey: 'fixture-public-key' })
       : globalThis.Response.json({ external: { google: false, email: true } }),
   });

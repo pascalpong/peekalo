@@ -4,6 +4,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ShareCapture } from '../../components/share-capture';
+import { AccountPrivacy } from '../../components/account-privacy';
 import { SafetySettings } from '../../components/safety';
 import { Button, colors, Eyebrow, Eyes, Screen, tokens, typography } from '../../components/ui';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../../lib/sharing-client';
@@ -70,6 +71,7 @@ export default function ProfileScreen() {
       const id = data.session?.user.id ?? null;
       if (identity.current !== id) { identity.current = id; clearOwner(); }
       if (!data.session) { setAccount({ state: 'signed_out' }); return; }
+      setAccount({ state: 'signed_in', email: data.session.user.email ?? null, username: null });
       const profile = await apiRequest<{ username: string | null; reviewState?: string }>('/api/profile', { signal: controller.signal, expectedAccountId: id! });
       if (!current()) return;
       setAccount({ state: 'signed_in', email: data.session.user.email ?? null, username: profile.username, reviewState: profile.reviewState });
@@ -256,6 +258,7 @@ export default function ProfileScreen() {
       <Button label="Open camera" icon="camera" onPress={() => router.navigate('/')} />
     </>}
     <View style={styles.limits}><Text style={typography.small}>Up to 3 active moments. Delete one to free a slot. Videos up to {MAX_VIDEO_DURATION_MS / 1000}s; recipients get up to {REVEAL_BUDGET_MS / 1000}s total across holds.</Text></View>
+    <AccountPrivacy accountId={signedIn ? identity.current ?? null : null} onDisabled={() => { cancel(); clearOwner(); setPanelOpen(false); void refresh(); }} />
     <SafetySettings key={identity.current ?? 'signed-out'} accountId={signedIn ? identity.current ?? null : null} />
     <Button secondary label="Explore the sample" onPress={() => router.push('/sample')} />
     <ShareCapture visible={panelOpen} capture={null} onClose={() => { setPanelOpen(false); void refresh(); }} />

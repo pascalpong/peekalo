@@ -21,7 +21,7 @@ export const saveProfile = endpoint(async request => {
   return response(await rpc('peekalo_save_profile', { p_actor: id, p_username: input.username }), request);
 });
 export const upload = endpoint(async request => {
-  const owner = await account(request); const key = uuid(request.headers.get('idempotency-key'));
+  const owner = await account(request, { requireTerms: true }); const key = uuid(request.headers.get('idempotency-key'));
   const type = request.headers.get('content-type');
   if (!type?.startsWith('multipart/form-data;')) throw new ApiError(400, 'invalid_request');
   let release: (() => void) | undefined;
@@ -45,12 +45,18 @@ export const upload = endpoint(async request => {
     const storage = database().storage.from('peekalo-captures');
     let storagePath: string | undefined;
     let publicationRejected = false;
+    let writerStarted = false; let writeSettled = false;
     try {
       const processed = await normalizeCapture(Buffer.from(await file.arrayBuffer()), kind);
       storagePath = `${owner}/${post.id}/${attempt}.${processed.extension}`;
+      // Recheck after processing, before any private object write. The deletion
+      // worker also waits for bounded in-flight writes and sweeps orphan paths.
+      writerStarted = await rpc<boolean>('peekalo_storage_writer', { p_owner: owner, p_attempt: attempt, p_begin: true });
+      if (!writerStarted) throw new ApiError(403, 'account_deleting');
       // A late attempt can neither overwrite nor remove a newer retry's object.
       const { error: uploadError } = await storage.upload(storagePath, processed.bytes, { contentType: processed.contentType, upsert: false, cacheControl: '0' });
       if (uploadError) throw new ApiError(503, 'upload_failed');
+      writeSettled = true;
       const finished = await rpc<boolean>('peekalo_finish_upload', { p_owner: owner, p_post: post.id, p_attempt: attempt, p_path: storagePath });
       if (!finished) { publicationRejected = true; throw new ApiError(409, 'conflict'); }
       privateMediaCache.put(storagePath, kind, processed.bytes);
@@ -71,6 +77,13 @@ export const upload = endpoint(async request => {
         try { await storage.remove([storagePath]); } catch { /* Orphan maintenance is an operational retry. */ }
       }
       throw error;
+    } finally {
+      // Only a definitive successful Storage reply proves the outbound writer
+      // has settled. Ambiguity keeps a durable barrier for operational recovery.
+      if (writerStarted && writeSettled) {
+        try { await rpc('peekalo_storage_writer', { p_owner: owner, p_attempt: attempt, p_begin: false }); }
+        catch { /* A lost release reply remains conservatively pending. */ }
+      }
     }
   } catch (error) {
     if (error instanceof UploadAdmissionError) throw new ApiError(error.status, error.code);
@@ -78,14 +91,14 @@ export const upload = endpoint(async request => {
   } finally { release?.(); }
 });
 export const createLink = (postId: string) => endpoint(async request => {
-  const owner = await account(request); const post = uuid(postId); const nonce = uuid(request.headers.get('idempotency-key'));
+  const owner = await account(request, { requireTerms: true }); const post = uuid(postId); const nonce = uuid(request.headers.get('idempotency-key'));
   const token = linkToken(owner, post, nonce);
   const link = await rpc<{ nonce: string; expires_at: string; revoked: boolean; claimed_identity: string | null }>('peekalo_create_link', { p_owner: owner, p_post: post, p_nonce: nonce, p_hash: tokenHash(token) });
   const state = link.revoked ? 'revoked' : Date.parse(link.expires_at) <= Date.now() ? 'expired' : link.claimed_identity ? 'claimed' : 'active';
   return response({ url: `${configuration().appUrl}/s/view#${linkToken(owner, post, link.nonce)}`, expiresAt: link.expires_at, state }, request);
 });
 export const recipient = (postId: string) => endpoint(async request => {
-  const owner = await account(request); const input = await body(request);
+  const owner = await account(request, { requireTerms: true }); const input = await body(request);
   if (typeof input.username !== 'string' || !/^[a-z0-9_]{3,24}$/.test(input.username)) throw new ApiError(400, 'invalid_username');
   const result = await rpc<{ requestState: string; accountId: string }>('peekalo_grant_target', { p_owner: owner, p_post: uuid(postId), p_username: input.username });
   return response(result, request);
@@ -133,7 +146,7 @@ export const viewStatus = (direct = false) => endpoint(async request => {
   return response(await rpc('peekalo_view_status', { p_identity: identity, p_hash: direct ? null : tokenHash(input.token), p_post: direct ? uuid(input.postId) : null }), request);
 });
 export const accept = (postId: string) => endpoint(async request => {
-  const recipientId = await account(request);
+  const recipientId = await account(request, { requireTerms: true });
   const state = await rpc<string>('peekalo_accept', { p_recipient: recipientId, p_post: uuid(postId) });
   return response({ requestState: state }, request);
 });

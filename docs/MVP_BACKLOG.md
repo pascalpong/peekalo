@@ -112,8 +112,8 @@ Meaningful backend/security checks:
 
 - [ ] Filtering/moderation queue, restricted operator access and published contact. REL-03 is implementing local manual pre-publication moment/username approval, restricted audited review, takedown and account suspension. Actual verification and remaining contact/operator/rollout gates are on the build board.
 - [ ] Report post/comment/message/user; responses and takedowns actually work. REL-03 covers moments/accounts and identified-account blocks; REL-06 must extend authorized report targets and bilateral block enforcement to durable comments/chat.
-- [ ] Terms acceptance, privacy/terms/support pages, age and country decisions.
-- [ ] In-app deletion and external deletion request route; cleanup and retention policy.
+- [ ] Terms acceptance, privacy/terms/support pages, age and country decisions. REL-04 adds matching draft resources, explicit versioned acceptance and a closed publication gate. Operator/contact/age/country confirmation, reviewed published copy and operational evidence are still required.
+- [ ] In-app deletion and external deletion request route; cleanup and retention policy. REL-04 source implements verified confirmation, atomic disabling, durable private Storage/Auth/provider cleanup, receipts, bounded safety expiry and backup suppression guards; local verification and release dependencies are on the build board. Hosted rollout, monitored scheduling/restore evidence, Apple/browser/provider and signed-device gates remain open.
 - [ ] App Privacy/Data safety disclosures match the app and installed SDKs.
 - [ ] Check current social-app child-safety and store requirements for the selected audience.
 - [ ] Physical-device tests: recording started before reveal and during it, mirroring/sharing, screenshot shortcuts, interruptions, Control Center, app switcher, orientation, navigation and repeated mounts.

@@ -84,6 +84,7 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     for (const [index, effect] of effects) { hooks[index].cleanup?.(); hooks[index].cleanup = effect(); }
     effects.clear();
   };
+  let accountDisabled;
   const imports = {
     react, 'react/jsx-runtime': { jsx, jsxs: jsx },
     '@expo/vector-icons/Feather': { default: 'Feather' },
@@ -108,6 +109,7 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     '../../lib/crop-photo': { cropPhoto916: async photo => photo },
     '../../lib/capture-framing': { frame916: () => ({ width: 400, height: 711 }) },
     '../../components/video-review': { VideoReview: 'VideoReview' },
+    '../../lib/account-lifecycle': { subscribeAccountDisabled: listener => { accountDisabled = listener; return () => { accountDisabled = null; }; } },
     '../../components/share-capture': { ShareCapture: 'ShareCapture' },
   };
   const exports = {};
@@ -118,7 +120,7 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
   t.after(() => { mounted = false; for (const hook of hooks) hook?.cleanup?.(); });
   const shutter = () => find(tree, node => node.props?.accessibilityLabel === 'Take photo or hold to record video').props;
   return {
-    records, photos, deleted,
+    records, photos, deleted, disableAccount() { accountDisabled?.('fixture-account'); },
     readyCallback: () => find(tree, node => node.type === 'CameraView')?.props.onCameraReady,
     ready() { this.readyCallback()?.(); },
     shutter,
@@ -405,4 +407,12 @@ test('microphone permission recovery remains usable when blur/focus rendering is
   h.release(); h.records[0].resolve({ uri: 'file:///fixture/permission-recovered.mp4' }); await flush();
   assert.equal(h.review(), 'file:///fixture/permission-recovered.mp4');
   h.press('Discard'); await flush(); assert.deepEqual(h.deleted, ['file:///fixture/permission-recovered.mp4']);
+});
+
+
+test('confirmed account disable clears an explicitly retained Share draft and closes sharing', async t => {
+  const h = harness(t); await flush(); h.ready(); await flush(); h.tap(); await flush();
+  const capture = h.photos[0]; capture.resolve({ uri: 'file:///generated-account-delete.jpg', width: 900, height: 1600 }); await flush();
+  h.press('Share moment'); await flush(); assert.equal(h.share().visible, true);
+  h.disableAccount(); await flush(); assert.equal(h.share()?.visible ?? false, false); assert.equal(h.photoReview(), undefined); assert(h.deleted.includes('file:///generated-account-delete.jpg'));
 });

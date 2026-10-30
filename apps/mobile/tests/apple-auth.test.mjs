@@ -11,7 +11,7 @@ const source = ts.transpileModule(readFileSync(new URL('../src/lib/sharing-clien
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const appleSession = { access_token: 'synthetic-apple-token', refresh_token: 'synthetic-apple-refresh', user: { id: 'apple-fixture' } };
-const initialSession = { access_token: 'synthetic-existing-token', refresh_token: 'synthetic-existing-refresh', user: { id: 'existing-fixture' } };
+const initialSession = { access_token: 'synthetic-existing-token', refresh_token: 'synthetic-existing-refresh', user: { id: 'existing-fixture', email: 'fixture@example.invalid' } };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const flush = async () => { for (let i = 0; i < 100; i++) await Promise.resolve(); };
 const cancelled = error => error.code === 'cancelled';
@@ -47,6 +47,7 @@ function harness({ available = true, provider = true, native, exchange, commit, 
       if (!options.auth.storageKey) return main;
       const temporary = { options, auth: {
         startAutoRefresh() {}, stopAutoRefresh() { events.push('isolated:stop'); },
+        async signInWithPassword(credentials) { exchanges.push(credentials); return exchange ? exchange(credentials, options) : { data: { session: appleSession }, error: null }; },
         async signInWithIdToken(credentials) {
           assert(options.auth.storageKey.startsWith('apple-'));
           exchanges.push(credentials); events.push('isolated:exchange');
@@ -215,4 +216,49 @@ test('Apple isolated Auth transport shares the 30-second timeout and screen abor
   screen.abort(); await assert.rejects(apple, cancelled);
   assert.equal(transportSignal.aborted, true); assert.equal(h.timers.size, 0);
   assert.equal(h.session, initialSession); assert.deepEqual(h.logs, []);
+});
+
+
+test('same-account Apple deletion proof refuses a different account before ordinary login changes', async () => {
+  const h = harness();
+  await assert.rejects(h.api.signInWithApple(undefined, undefined, 'existing-fixture'), error => error.code === 'account_changed');
+  assert.equal(h.session, initialSession); assert.equal(h.events.some(event => event.startsWith('main:')), false);
+});
+
+test('Apple deletion authorization code is handed to the caller only after a same-account commit', async () => {
+  const h = harness({ native: options => ({ identityToken: 'fixture-id-token', authorizationCode: 'fixture-one-use-code', state: options.state }), exchange: () => ({ data: { session: { ...appleSession, user: initialSession.user } }, error: null }) });
+  const codes = [];
+  assert.equal(await h.api.signInWithApple(undefined, undefined, 'existing-fixture', code => codes.push(code)), true);
+  assert.deepEqual(codes, ['fixture-one-use-code']); assert.deepEqual(h.logs, []);
+});
+
+test('isolated password deletion proof rejects wrong account without replacing ordinary session', async () => {
+  const h = harness();
+  await assert.rejects(h.api.reauthenticateForDeletion('existing-fixture', 'fixture-generated-password'), error => error.code === 'account_changed');
+  assert.equal(h.session, initialSession); assert.equal(h.events.some(event => event.startsWith('main:')), false);
+  assert.equal(h.isolated[0].options.auth.persistSession, false); assert.deepEqual(h.logs, []);
+});
+
+test('isolated password deletion proof can only refresh the current account and never persists the password', async () => {
+  const h = harness({ exchange: credentials => {
+    assert.equal(credentials.email, 'fixture@example.invalid'); assert.equal(credentials.password, 'fixture-generated-password');
+    return { data: { session: { ...appleSession, user: initialSession.user } }, error: null };
+  } });
+  await h.api.reauthenticateForDeletion('existing-fixture', 'fixture-generated-password');
+  assert.equal(h.session.access_token, appleSession.access_token); assert.deepEqual(h.logs, []);
+});
+
+test('a newer signout invalidates isolated password proof before it can restore deletion login', async () => {
+  const pending = deferred(); const h = harness({ exchange: () => pending.promise });
+  const proof = h.api.reauthenticateForDeletion('existing-fixture', 'fixture-generated-password'); await flush();
+  await h.api.performAccountAuth(client => client.auth.signOut(), undefined, undefined, { restoreOnCancel: false });
+  pending.resolve({ data: { session: { ...appleSession, user: initialSession.user } }, error: null });
+  await assert.rejects(proof, cancelled); assert.equal(h.session, null); assert.deepEqual(h.logs, []);
+});
+
+
+test('same-account Google deletion proof refuses a different account before ordinary login changes', async () => {
+  const h = harness({ browser: async () => ({ type: 'success', url: 'peekalo://auth-callback?code=fixture-code&sb_flow_id=synthetic-flow' }) });
+  await assert.rejects(h.api.signInWithGoogle(undefined, undefined, 'existing-fixture'), error => error.code === 'account_changed');
+  assert.equal(h.session, initialSession); assert.equal(h.events.some(event => event.startsWith('main:')), false); assert.deepEqual(h.logs, []);
 });

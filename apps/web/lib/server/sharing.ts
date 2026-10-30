@@ -27,11 +27,29 @@ export function database() {
   const c = configuration();
   return createClient(c.url, c.service, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (url, init) => backendFetch(url, init) } });
 }
-export async function account(request: Request) {
+// Explicit release publication prerequisites. Presence is configuration, not
+// evidence of legal review, mailbox delivery, invitation enforcement or coverage.
+export function policyReady() {
+  const email = (value: string | undefined) => Boolean(value && value.length <= 254 && /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/.test(value));
+  const name = process.env.POLICY_OPERATOR_NAME?.trim();
+  const countries = process.env.POLICY_COUNTRIES;
+  const age = Number(process.env.POLICY_MINIMUM_AGE);
+  return process.env.POLICY_PUBLISHED === 'true' && Boolean(name && name.length <= 200 && !/[\r\n]/.test(name)) &&
+    Boolean(countries && /^[A-Z]{2}(?:,[A-Z]{2})*$/.test(countries)) && Number.isInteger(age) && age >= 13 && age <= 120 &&
+    email(process.env.SAFETY_SUPPORT_EMAIL) && email(process.env.SAFETY_CHILD_SAFETY_EMAIL) &&
+    Boolean(process.env.SAFETY_AGE_POLICY?.trim());
+}
+export async function account(request: Request, controls: { allowDeleting?: boolean; requireTerms?: boolean } = {}) {
   const bearer = request.headers.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];
   if (!bearer || bearer.length > 8192) throw new ApiError(401, 'sign_in_required');
   const { data, error } = await database().auth.getUser(bearer);
   if (error || !data.user) throw new ApiError(401, 'sign_in_required');
+  if (!controls.allowDeleting && !await rpc<boolean>('peekalo_account_access', { p_actor: data.user.id })) throw new ApiError(403, 'account_deleting');
+  if (controls.requireTerms) {
+    if (!policyReady()) throw new ApiError(503, 'policy_unavailable');
+    const state = await rpc<{ accepted: boolean }>('peekalo_policy_status', { p_actor: data.user.id, p_terms: '2026-10-29-draft', p_privacy: '2026-10-29-draft' });
+    if (!state.accepted) throw new ApiError(403, 'terms_required');
+  }
   return data.user.id;
 }
 export async function body(request: Request) {
@@ -98,6 +116,7 @@ export async function rpc<T = Record<string, unknown>>(name: string, args: Recor
     if (error.code === '23505') throw new ApiError(409, 'username_taken');
     if (error.message === 'username_taken') throw new ApiError(409, 'username_taken');
     if (error.message === 'username') throw new ApiError(400, 'invalid_username');
+    if (error.message === 'account_deleting') throw new ApiError(403, 'account_deleting');
     if (error.message === 'suspended') throw new ApiError(403, 'suspended');
     throw new ApiError(...(known ?? [503, 'sharing_unavailable']));
   }

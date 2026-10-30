@@ -42,7 +42,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-function fixture(t, { missingAttempt = false, finish = () => true, fail = () => true, uploadError = false, deleted = false, beforeRead } = {}) {
+function fixture(t, { missingAttempt = false, finish = () => true, fail = () => true, uploadError = false, deleted = false, writer = () => true, beforeRead } = {}) {
   const events = []; const calls = []; const writes = []; const removals = []; const cached = [];
   const admission = load(admissionSource, { 'node:timers': timers, 'node:perf_hooks': perf });
   t.after(() => {
@@ -62,7 +62,9 @@ function fixture(t, { missingAttempt = false, finish = () => true, fail = () => 
         };
       } } }),
       rpc: async (name, args) => {
-        events.push(name); calls.push({ name, args });
+        calls.push({ name, args });
+        if (name === 'peekalo_storage_writer') return writer(args);
+        events.push(name);
         if (name === 'peekalo_reserve_post') return { id: postId, status: 'uploading', reserved: true, ...(!missingAttempt ? { upload_attempt: attempt } : {}) };
         if (name === 'peekalo_finish_upload') return finish();
         if (name === 'peekalo_fail_upload') return fail();
@@ -238,4 +240,20 @@ test('deadline-aborted finish and failure calls release admission for a later up
   stalled = false;
   const retry = await f.send(f.request());
   assert.equal(retry.status, 200, 'The sole upload slot must be reusable after both aborts');
+});
+
+
+test('deletion before outbound writer admission prevents any private object upload', async t => {
+  const f = fixture(t, { writer: () => false });
+  const result = await f.send(f.request());
+  assert.equal(result.status, 403);
+  assert.equal(f.writes.length, 0);
+});
+test('definitive successful Storage response releases writer barrier after publication', async t => {
+  const f = fixture(t); assert.equal((await f.send(f.request())).status, 200);
+  assert.deepEqual(f.calls.filter(call => call.name === 'peekalo_storage_writer').map(call => call.args.p_begin), [true, false]);
+});
+test('ambiguous Storage response preserves durable writer barrier for reconciliation', async t => {
+  const f = fixture(t, { uploadError: true }); assert.equal((await f.send(f.request())).status, 503);
+  assert.deepEqual(f.calls.filter(call => call.name === 'peekalo_storage_writer').map(call => call.args.p_begin), [true]);
 });

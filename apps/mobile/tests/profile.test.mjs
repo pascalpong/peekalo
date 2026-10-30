@@ -50,6 +50,7 @@ function harness(t, { bootstrap, getSession, share } = {}) {
     'expo-router': { router: { navigate() {}, push() {} }, useFocusEffect: callback => { focusCallback = callback; } },
     '../../components/ui': { Button: 'Button', colors: {}, typography: {}, tokens: { font: {}, radius: {}, type: {} }, Eyebrow: 'Eyebrow', Eyes: 'Eyes', Screen: 'Screen' },
     '../../components/share-capture': { ShareCapture: 'ShareCapture' },
+    '../../components/account-privacy': { AccountPrivacy: 'AccountPrivacy' },
     '../../components/safety': { SafetySettings: 'SafetySettings' },
     '../../lib/sharing-client': {
       SharingError, resolveApiUrl: path => `https://fixture.invalid${path}`, newIdempotencyKey: () => `fixture-key-${++nextKey}`,

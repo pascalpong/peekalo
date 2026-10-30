@@ -65,6 +65,6 @@ export default function HomePage() {
       </div></section>
       <section className={styles.waitlist} id="early-access" aria-labelledby="waitlist-title"><span className={styles.waitlistDoodle} aria-hidden="true">♡</span><p className={styles.eyebrow}><span className={styles.statusDot} /> A LITTLE SOMETHING IS COMING</p><h2 id="waitlist-title">Be in on<br />the little things.</h2><p>{waitlistEnabled ? 'Leave your email. We’ll let you know when it’s time to peek.' : 'Your people. Your little moments. Early access is on its way.'}</p><WaitlistForm enabled={waitlistEnabled} /><span className={styles.platforms}>MADE FOR iOS & ANDROID · COMING SOON</span></section>
     </main>
-    <footer className={styles.footer}><Link href="/" className={styles.brand} aria-label="Peekalo home"><BrandLogo /></Link><p>A little glimpse. A little closer.</p><div>{appOrigin && <a href={appOrigin}>Open web app ↗</a>}<Link href="/privacy">Privacy & contact</Link><span>© 2026 Peekalo</span></div></footer>
+    <footer className={styles.footer}><Link href="/" className={styles.brand} aria-label="Peekalo home"><BrandLogo /></Link><p>A little glimpse. A little closer.</p><div>{appOrigin && <a href={appOrigin}>Open web app ↗</a>}<Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/support">Support</Link><Link href="/delete-account">Delete account</Link><span>© 2026 Peekalo</span></div></footer>
   </div>;
 }

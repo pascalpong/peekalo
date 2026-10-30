@@ -14,6 +14,7 @@ import { createVideoSession } from '../../lib/video-session';
 import { cropPhoto916 } from '../../lib/crop-photo';
 import { frame916 } from '../../lib/capture-framing';
 import { VideoReview } from '../../components/video-review';
+import { subscribeAccountDisabled } from '../../lib/account-lifecycle';
 import { ShareCapture } from '../../components/share-capture';
 
 export default function CameraScreen() {
@@ -148,6 +149,10 @@ export default function CameraScreen() {
       if (stopRetry.current) { clearInterval(stopRetry.current); stopRetry.current = null; }
     };
   }, [cancelPreparation, videoSession]);
+
+  useEffect(() => subscribeAccountDisabled(() => {
+    generation.current++; cancelPreparation(); sharingOpen.current = false; setSharing(false); session.discard(); videoSession.discard();
+  }), [cancelPreparation, session, videoSession]);
 
   useEffect(() => { if (!showCamera) setReady(false); }, [showCamera]);
 

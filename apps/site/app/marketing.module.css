@@ -321,3 +321,6 @@
 @media (prefers-reduced-motion: reduce) {
   .site *, .site *:before, .site *:after { transition: none !important; scroll-behavior: auto !important; }
 }
+
+.policyLinks { display: flex; flex-wrap: wrap; gap: 14px 24px; border-top: 1px solid var(--pk-color-border); padding-top: 24px; margin-top: 36px; font-size: 13px; }
+.footer > div { flex-wrap: wrap; }

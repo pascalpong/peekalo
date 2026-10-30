@@ -861,10 +861,141 @@ try {
       });
     }
 
+    await t.test('account deletion disables access atomically, keeps stable request and fences late publication', async () => {
+      const f = await fixture(db); await accept(db, f);
+      const held = await lease(db, f);
+      const key = randomUUID(); const reservation = await value(db, 'select peekalo_reserve_post($1,$2,$3) as value', [f.owner,key,'photo']);
+      const path = `${f.owner}/${reservation.id}/${reservation.upload_attempt}.jpg`;
+      const started = await value(db, 'select peekalo_storage_writer($1,$2,true) as value', [f.owner,reservation.upload_attempt]); assert.equal(started,true);
+      const job = await value(db, 'select peekalo_begin_deletion($1) as value', [f.owner]);
+      assert.deepEqual(await value(db, 'select peekalo_begin_deletion($1) as value', [f.owner]),job);
+      assert.equal(await value(db, 'select peekalo_account_access($1) as value', [f.owner]),false);
+      assert.equal(await value(db, 'select count(*)::integer as value from peekalo_profiles where id=$1',[f.owner]),0);
+      await failure(() => lease(db,f),'unavailable');
+      await failure(() => value(db,'select peekalo_media($1,$2) as value',[f.identity,held.leaseId]),'unavailable');
+      await failure(() => value(db,'select peekalo_reserve_post($1,$2,$3) as value',[f.owner,randomUUID(),'photo']),'account_deleting');
+      await failure(() => value(db,'select peekalo_save_profile($1,$2) as value',[f.owner,'cannot_return']),'account_deleting');
+      assert.equal(await value(db,'select peekalo_finish_upload($1,$2,$3,$4) as value',[f.owner,reservation.id,reservation.upload_attempt,path]),false);
+      assert.equal(await value(db,'select peekalo_storage_writer($1,$2,true) as value',[f.owner,randomUUID()]),false);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),false);
+      assert(!(await value(db,'select peekalo_deletion_jobs(50) as value')).some(item=>item.requestId===job.requestId),'Grace blocks cleanup admission');
+      await db.query("update peekalo_account_deletions set requested_at=clock_timestamp()-interval '11 minutes',not_before=clock_timestamp()-interval '1 minute' where request_id=$1",[job.requestId]);
+      assert((await value(db,'select peekalo_deletion_jobs(50) as value')).find(item=>item.requestId===job.requestId).writersPending);
+      assert.equal(await value(db,'select peekalo_storage_writer($1,$2,false) as value',[f.owner,reservation.upload_attempt]),true);
+    });
+
+    await t.test('deleting a viewer preserves other owners and anonymizes claimed links and spent budgets', async () => {
+      const f=await fixture(db); await accept(db,f); const held=await lease(db,f);
+      const other=await fixture(db); await lease(db,other,{identity:`g:${randomUUID()}`});
+      await value(db,"select peekalo_accept_policy($1,'2026-10-29-draft','2026-10-29-draft') as value",[f.recipient]);
+      const report=await value(db,"select peekalo_report($1,'post','privacy','synthetic report',$2) as value",[f.identity,f.post]);
+      const reviewer=await operator(db);
+      await value(db,"select peekalo_resolve_report($1,$2,'Synthetic private resolution') as value",[reviewer,report.reportId]);
+      const job=await value(db,'select peekalo_begin_deletion($1) as value',[f.recipient]);
+      assert.equal(await value(db,'select note as value from peekalo_safety_audit where target_id=$1 order by id desc limit 1',[report.reportId]),null,'Duplicated resolution audit note is scrubbed too');
+      await db.query("update peekalo_account_deletions set requested_at=clock_timestamp()-interval '11 minutes',not_before=clock_timestamp()-interval '1 minute' where request_id=$1",[job.requestId]);
+      await failure(()=>value(db,'select peekalo_media($1,$2) as value',[f.identity,held.leaseId]),'unavailable');
+      assert.equal(await value(db,'select status as value from peekalo_posts where id=$1',[f.post]),'ready');
+      assert.equal(await value(db,'select details as value from peekalo_reports where id=$1',[report.reportId]),'');
+      assert.equal(await value(db,"select peekalo_deletion_progress($1,'storage_verified') as value",[job.requestId]),true);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),false,'Auth removal required');
+      await db.query('delete from auth.users where id=$1',[f.recipient]);
+      assert.equal(await value(db,"select peekalo_deletion_progress($1,'auth_deleted') as value",[job.requestId]),true);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),true);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),true,'Idempotent completion');
+      const link=(await db.query('select revoked,claimed_identity from peekalo_links where id=$1',[f.link])).rows[0];
+      assert.equal(link.revoked,true); assert.match(link.claimed_identity,/^g:/); assert.notEqual(link.claimed_identity,f.identity);
+      assert.equal(await value(db,'select spent_ms as value from peekalo_budgets where post_id=$1',[f.post]),2000);
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_policy_acceptances where account_id=$1',[f.recipient]),0);
+      await failure(()=>lease(db,f,{identity:`a:${f.stranger}`}), 'unavailable');
+      assert.equal(await value(db,'select status as value from peekalo_posts where id=$1',[other.post]),'ready');
+      assert.equal(await value(db,'select spent_ms as value from peekalo_budgets where post_id=$1',[other.post]),2000);
+    });
+
+    await t.test('deletion waits for an in-flight authorization transaction before revoking it', async () => {
+      const f=await fixture(db); const viewer=await connect(), deleter=await connect();
+      await viewer.query('begin'); const held=await lease(viewer,f);
+      const deletion=value(deleter,'select peekalo_begin_deletion($1) as value',[f.owner]);
+      await waitForBlock(db,deleter,viewer);
+      await viewer.query('commit'); const job=await deletion;
+      assert.equal(job.status,'pending');
+      await failure(()=>value(db,'select peekalo_media($1,$2) as value',[f.identity,held.leaseId]),'unavailable');
+    });
+
+    await t.test('queued safety writes recheck disabling after the deletion transaction commits', async () => {
+      const f=await fixture(db), blocker=await connect(), reporter=await connect(), blocking=await connect();
+      await blocker.query('begin'); await value(blocker,'select peekalo_begin_deletion($1) as value',[f.recipient]);
+      const report=value(reporter,"select peekalo_report($1,'post','privacy','must not survive',$2) as value",[f.identity,f.post]);
+      const block=value(blocking,'select peekalo_block($1,null,true,$2) as value',[f.recipient,f.owner]);
+      const deniedReport=failure(()=>report,'account_deleting'),deniedBlock=failure(()=>block,'account_deleting');
+      await waitForBlock(db,reporter,blocker); await waitForBlock(db,blocking,blocker);
+      await blocker.query('commit'); await Promise.all([deniedReport,deniedBlock]);
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_reports where reporter_identity=$1',[f.identity]),0);
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_blocks where blocker_id=$1',[f.recipient]),0);
+    });
+
+    await t.test('policy versions are idempotent, deletion accessible without acceptance, and Apple cannot falsely complete', async () => {
+      const f=await fixture(db);
+      assert.equal((await value(db,"select peekalo_policy_status($1,'2026-10-29-draft','2026-10-29-draft') as value",[f.owner])).accepted,false);
+      await failure(()=>value(db,"select peekalo_accept_policy($1,'old','old') as value",[f.owner]),'conflict');
+      for(let i=0;i<2;i++) assert.deepEqual(await value(db,"select peekalo_accept_policy($1,'2026-10-29-draft','2026-10-29-draft') as value",[f.owner]),{accepted:true});
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_policy_acceptances where account_id=$1',[f.owner]),1);
+      const job=await value(db,'select peekalo_begin_deletion($1,true) as value',[f.owner]);
+      await failure(()=>value(db,"select peekalo_accept_policy($1,'2026-10-29-draft','2026-10-29-draft') as value",[f.owner]),'account_deleting');
+      await db.query("update peekalo_account_deletions set requested_at=clock_timestamp()-interval '11 minutes',not_before=clock_timestamp()-interval '1 minute' where request_id=$1",[job.requestId]);
+      await value(db,"select peekalo_deletion_progress($1,'storage_verified') as value",[job.requestId]);
+      await db.query('delete from auth.users where id=$1',[f.owner]);
+      await value(db,"select peekalo_deletion_progress($1,'auth_deleted') as value",[job.requestId]);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),false);
+      assert((await value(db,'select peekalo_deletion_status($1) as value',[job.requestId])).needsAppleReauthentication);
+      await value(db,"select peekalo_deletion_progress($1,'provider_revoked',repeat('b',64)) as value",[job.requestId]);
+      await value(db,"select peekalo_deletion_progress($1,'provider_required',repeat('a',64)) as value",[job.requestId]);
+      assert((await value(db,'select peekalo_deletion_status($1) as value',[job.requestId])).needsAppleReauthentication,'Changed provider subject invalidates old revocation evidence');
+      await value(db,"select peekalo_deletion_progress($1,'provider_revoked',repeat('a',64)) as value",[job.requestId]);
+      await value(db,"select peekalo_deletion_progress($1,'provider_required',repeat('a',64)) as value",[job.requestId]);
+      assert.equal((await value(db,'select peekalo_deletion_status($1) as value',[job.requestId])).needsAppleReauthentication,false,'Stale snapshot cannot clear fresh matching revocation');
+      await value(db,"select peekalo_deletion_progress($1,'provider_revoked',repeat('a',64)) as value",[job.requestId]);
+      assert.equal(await value(db,'select peekalo_complete_deletion($1) as value',[job.requestId]),true);
+    });
+
+    await t.test('retention expires bounded safety text and complete receipts only after a recent successful sweep', async () => {
+      const f=await fixture(db); const reviewer=await operator(db);
+      const report=await value(db,"select peekalo_report($1,'account','other','synthetic report',null,null,null,$2) as value",[f.identity,f.owner]);
+      await db.query("update peekalo_reports set created_at=clock_timestamp()-interval '91 days' where id=$1",[report.reportId]);
+      await db.query("insert into peekalo_safety_audit(operator_id,event,note,created_at) values($1,'retention_fixture','synthetic',clock_timestamp()-interval '91 days')",[reviewer]);
+      const job=await value(db,'select peekalo_begin_deletion($1) as value',[f.owner]);
+      await db.query("update peekalo_account_deletions set requested_at=clock_timestamp()-interval '32 days',not_before=clock_timestamp()-interval '31 days',state='complete',completed_at=clock_timestamp()-interval '31 days',storage_verified_at=clock_timestamp()-interval '2 days' where request_id=$1",[job.requestId]);
+      await db.query('delete from auth.users where id=$1',[f.owner]);
+      const expired=await value(db,'select peekalo_expire_private_records() as value'); assert(expired.reports>=1);assert(expired.audits>=1);
+      assert.equal(await value(db,'select peekalo_deletion_status($1) as value',[job.requestId]),null,'Public receipt expires after 30 days');
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_account_deletions where request_id=$1',[job.requestId]),1,'Stale sweep cannot purge suppression journal');
+      await value(db,"select peekalo_deletion_progress($1,'storage_verified') as value",[job.requestId]);
+      await value(db,"select peekalo_deletion_progress($1,'failed','storage_failed') as value",[job.requestId]);
+      await value(db,'select peekalo_expire_private_records() as value'); assert.equal(await value(db,'select count(*)::integer as value from peekalo_account_deletions where request_id=$1',[job.requestId]),1);
+      assert((await value(db,'select peekalo_deletion_jobs(50) as value')).some(item=>item.requestId===job.requestId),'Failed complete sweep remains retryable');
+      await value(db,"select peekalo_deletion_progress($1,'storage_verified') as value",[job.requestId]);
+      await value(db,'select peekalo_expire_private_records() as value');
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_account_deletions where request_id=$1',[job.requestId]),1,'Backup inventory must be reconciled before suppression can expire');
+      assert.equal(await value(db,"select peekalo_reconcile_deletion_backups($1,clock_timestamp()-interval '40 days') as value",[job.requestId]),false);
+      assert.equal(await value(db,"select peekalo_reconcile_deletion_backups($1,clock_timestamp()-interval '31 days 12 hours') as value",[job.requestId]),false,'Request timestamp alone cannot prove a committed backup guard');
+      assert.equal(await value(db,"select peekalo_reconcile_deletion_backups($1,clock_timestamp()-interval '1 day') as value",[job.requestId]),true);
+      await value(db,'select peekalo_expire_private_records() as value');
+      assert.equal(await value(db,'select count(*)::integer as value from peekalo_account_deletions where request_id=$1',[job.requestId]),0);
+      assert.equal(await value(db,'select peekalo_account_access($1) as value',[f.owner]),false,'Erased Auth identity remains unavailable after receipt expiry');
+    });
+
     await t.test('public client roles cannot read ledger tables or call privileged functions', async () => {
       const f = await fixture(db);
-      const tables = ['profiles', 'posts', 'links', 'link_requests', 'grants', 'budgets', 'leases', 'operators', 'blocks', 'reports', 'safety_audit', 'suspended_accounts'];
+      const tables = ['profiles', 'posts', 'links', 'link_requests', 'grants', 'budgets', 'leases', 'operators', 'blocks', 'reports', 'safety_audit', 'suspended_accounts', 'account_deletions', 'policy_acceptances', 'storage_writers'];
       const calls = [
+        ['peekalo_begin_deletion($1)', [f.owner]],
+        ['peekalo_deletion_status($1)', [randomUUID()]],
+        ['peekalo_deletion_jobs(1)', []],
+        ['peekalo_complete_deletion($1)', [randomUUID()]],
+        ['peekalo_expire_private_records()', []],
+        ['peekalo_reconcile_deletion_backups($1,clock_timestamp())', [randomUUID()]],
+        ['peekalo_storage_writer($1,$2,true)', [f.owner,randomUUID()]],
+        ['peekalo_policy_status($1,$2,$3)', [f.owner,'fixture','fixture']],
         ['peekalo_save_profile($1,$2)', [f.owner, f.username]],
         ['peekalo_lookup_profile($1,$2)', [f.owner, f.username]],
         ['peekalo_block($1,$2,true)', [f.owner, f.username]],
@@ -903,6 +1034,7 @@ try {
         await client.query('reset role');
       }
       await client.query('set role service_role');
+      await assert.rejects(() => value(client,'select peekalo_reconcile_deletion_backups($1,clock_timestamp()) as value',[randomUUID()]), { code: '42501' });
       await assert.rejects(() => value(client, 'select peekalo_lease_before_safety($1,$2,$3,$4) as value', [f.identity, randomUUID(), randomUUID(), f.hash]), { code: '42501' });
       await assert.rejects(() => client.query("insert into peekalo_operators(account_id) values($1)", [f.owner]), { code: '42501' });
       await assert.rejects(() => client.query("update peekalo_profiles set review_state='approved' where id=$1", [f.owner]), { code: '42501' });

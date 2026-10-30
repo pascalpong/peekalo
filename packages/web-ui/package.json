@@ -8,10 +8,23 @@
     "./icons": "./src/icons.tsx",
     "./reveal": "./src/fullscreen-reveal.tsx",
     "./base.css": "./src/base.css",
-    "./origins": "./src/origins.ts"
+    "./origins": "./src/origins.ts",
+    "./policy": "./src/policy.tsx"
   },
-  "scripts": { "lint": "eslint src", "typecheck": "tsc --noEmit" },
-  "dependencies": { "@peekalo/design": "workspace:*" },
-  "peerDependencies": { "react": "19.2.0", "react-dom": "19.2.0" },
-  "devDependencies": { "@types/react": "19.2.18", "@types/react-dom": "19.2.3", "typescript": "5.9.3" }
+  "scripts": {
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@peekalo/design": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
 }

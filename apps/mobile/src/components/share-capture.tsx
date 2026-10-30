@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { apiRequest, getAuthProviders, getSharingClient, newIdempotencyKey, performAccountAuth, resolveApiUrl, SharingError, signInWithGoogle, signInWithApple, type AuthProviders } from '../lib/sharing-client';
+import { TermsAcceptance, type PrivacyStatus } from './account-privacy';
 import { AppleSignIn } from './apple-sign-in';
 import { requestEmailConfirmation, subscribeEmailConfirmation } from '../lib/auth-confirmation';
 import { colors, tokens } from './ui';
@@ -16,10 +17,11 @@ type Props = {
   onClose: () => void;
   onBusyChange?: (busy: boolean) => void;
 };
-type Stage = 'connecting' | 'unavailable' | 'auth' | 'username' | 'ready';
+type Stage = 'connecting' | 'unavailable' | 'auth' | 'terms' | 'username' | 'ready';
 type Draft = { uri: string; uploadKey: string; linkKey: string; postId?: string; postStatus?: string; link?: string; linkExpiresAt?: number; userId?: string };
 
 export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props) {
+  const [privacy, setPrivacy] = useState<PrivacyStatus | null>(null);
   const [stage, setStage] = useState<Stage>('connecting');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState('');
@@ -112,6 +114,11 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
       draft.current = { uri: draft.current.uri, userId: data.session.user.id, uploadKey: newIdempotencyKey(), linkKey: newIdempotencyKey() };
       setHasLink(false); setLastRecipient(''); lastRecipientAccountId.current = undefined; setRecipient(''); setUploaded(false); setRetry(null);
     }
+    const policy = await apiRequest<PrivacyStatus>('/api/account/privacy', { signal, expectedAccountId: data.session.user.id });
+    if (!current()) return;
+    setPrivacy(policy);
+    if (policy.deletionStatus) throw new SharingError('Account deletion is pending. Your account access is disabled.', 'account_deleting');
+    if (!policy.accepted || !policy.policyReady) { setStage('terms'); return; }
     const profile = await apiRequest<{ username: string | null; reviewState?: string }>('/api/profile', { signal, expectedAccountId: data.session.user.id });
     if (current()) { setUsername(profile.username ?? ''); setStage(profile.username ? 'ready' : 'username'); if (profile.reviewState === 'pending') setNotice('Your username is waiting for safety approval. It stays out of public profiles and recipient lookup until approved.'); else if (profile.reviewState === 'rejected') setNotice('Your username was not approved. Choose Change username and submit a different name for safety review.'); }
   }
@@ -376,6 +383,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
             {!signingUp && <Pressable accessibilityRole="button" disabled={busy || providers.email === false} onPress={forgotPassword} style={styles.textButton}><Text style={styles.textButtonLabel}>Forgot password?</Text></Pressable>}
             <Pressable accessibilityRole="button" disabled={busy} onPress={() => { setSigningUp(!signingUp); setError(''); setNotice(''); }} style={styles.textButton}><Text style={styles.textButtonLabel}>{signingUp ? 'Already have an account? Sign in' : 'New here? Create an account'}</Text></Pressable>
           </View>}
+          {stage === 'terms' && privacy && accountId.current ? <><TermsAcceptance status={privacy} accountId={accountId.current} onAccepted={connect} /><Action label="Sign out on this device" onPress={signOut} disabled={busy} secondary /></> : null}
           {stage === 'username' && <View style={styles.section}>
             <Text style={styles.heading}>Choose your username</Text><Text style={styles.body}>People can send their moments to this name.</Text>
             <TextInput style={styles.input} accessibilityLabel="Your username" placeholder="your_username" placeholderTextColor={colors.muted} value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} maxLength={24} editable={!busy} />

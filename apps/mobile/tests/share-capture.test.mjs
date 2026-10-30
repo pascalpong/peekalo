@@ -16,7 +16,7 @@ const find = (node, predicate) => {
   return predicate(node) ? node : find(node.props?.children, predicate);
 };
 class SharingError extends Error { constructor(message, code = 'unavailable') { super(message); this.code = code; } }
-function harness(t) {
+function harness(t, privacy = { accepted: true, policyReady: true, deletionStatus: null }) {
   let now = Date.parse('2026-10-28T00:00:00Z');
   class ClientDate extends Date { static now() { return now; } }
   const hooks = [], effects = new Map(), requests = [], subscribers = new Set(), shares = [];
@@ -43,7 +43,8 @@ function harness(t) {
     'react-native': { ...Object.fromEntries(['ActivityIndicator', 'KeyboardAvoidingView', 'Modal', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map(name => [name, name])), Platform: { OS: 'android' }, StyleSheet: { create: value => value }, Share: { dismissedAction: 'dismissed', async share(value) { shares.push(value); return { action: 'dismissed' }; } } },
     'react-native-safe-area-context': { SafeAreaProvider: 'SafeAreaProvider', SafeAreaView: 'SafeAreaView' },
     '../lib/sharing-client': { SharingError, getSharingClient: async () => client, resolveApiUrl: path => `https://fixture.invalid${path}`, newIdempotencyKey: () => `fixture-key-${++key}`,
-      apiRequest(path, options = {}) { const pending = deferred(); requests.push({ path, ...options, ...pending }); return pending.promise; } },
+      apiRequest(path, options = {}) { if (path === '/api/account/privacy') return Promise.resolve(privacy); const pending = deferred(); requests.push({ path, ...options, ...pending }); return pending.promise; } },
+    './account-privacy': { TermsAcceptance: 'TermsAcceptance' },
     './apple-sign-in': { AppleSignIn: 'AppleSignIn' },
     '../lib/auth-confirmation': { subscribeEmailConfirmation: () => () => {} },
     '../lib/auth-recovery': { subscribePasswordRecovery: () => () => {} },
@@ -213,4 +214,19 @@ test('immediate recipient revocation pins the granted account even after its nam
   h.requests.at(-1).resolve({ requestState: 'pending', accountId: 'fixture-original-recipient' }); await flush();
   h.press('Revoke @fixture_recipient access'); await flush();
   assert.equal(h.requests.at(-1).body.accountId, 'fixture-original-recipient'); assert.equal(h.requests.at(-1).body.username, undefined);
+});
+
+
+test('unaccepted or unpublished policies block username setup and upload until acceptance is confirmed', async t => {
+  for (const policy of [{ accepted: false, policyReady: true, deletionStatus: null }, { accepted: true, policyReady: false, deletionStatus: null }]) {
+    const h = harness(t, policy); await flush();
+    assert(h.text().includes('TermsAcceptance')); assert.equal(h.requests.length, 0);
+    assert.equal(h.text().includes('Create a single-use link'), false);
+  }
+});
+
+test('deleting accounts cannot load username or create a capture share', async t => {
+  const h = harness(t, { accepted: true, policyReady: true, deletionStatus: 'pending' }); await flush();
+  assert(h.error().includes('Account deletion is pending')); assert.equal(h.requests.length, 0);
+  assert.equal(h.text().includes('Create a single-use link'), false);
 });

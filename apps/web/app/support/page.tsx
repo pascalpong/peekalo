@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Shell } from '../../components/shell';
+import { PolicyLinks } from '../../components/policy-links';
 import { SafetyContact } from '../../components/safety-contact';
 
 export const metadata = { title: 'Support' };
@@ -12,6 +13,6 @@ export default function SupportPage() {
     <p>Reports go to a restricted review queue. If someone is in immediate danger, contact local emergency services. Peekalo&apos;s report queue is not an emergency response service.</p>
     <SafetyContact />
     <p>For moderation appeals, use the configured support contact with your account username and the decision or report reference, if available. Do not resend the original media.</p>
-    <p><Link href="/safety">Read the safety standards</Link></p>
+    <p><Link href="/delete-account">Delete your account and associated data</Link> from the secure browser route, or use Delete account in Profile. The privacy notice explains cleanup and narrow retention.</p><PolicyLinks />
   </main></Shell>;
 }
