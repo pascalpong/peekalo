@@ -17,6 +17,14 @@ services:
     autoDeployTrigger: "off"
     maxShutdownDelaySeconds: 120
     envVars:
+      # Source reference only. Existing services need deliberate environment
+      # configuration; sync:false is not an update mechanism for live values.
+      - key: PEEKALO_DEPLOYMENT
+        value: development
+      - key: PEEKALO_EXPECTED_BACKEND_ORIGIN
+        sync: false
+      - key: PEEKALO_SERVING_ENABLED
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_ANON_KEY

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import operationsRuntime from './operations-runtime.cjs';
 
 const require = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const execute = promisify(execFile);
@@ -21,6 +22,8 @@ function origin(value, allowLoopback = false) {
 
 export function validateHostingEnvironment(env) {
   try {
+    operationsRuntime.validateDeploymentEnvironment(env);
+    if (env.PEEKALO_SERVING_ENABLED !== 'true') throw new Error(failure);
     const supabaseUrl = origin(env.SUPABASE_URL);
     const appUrl = origin(env.PUBLIC_APP_URL, true);
     if (typeof env.SUPABASE_ANON_KEY !== 'string' || !env.SUPABASE_ANON_KEY.trim() ||

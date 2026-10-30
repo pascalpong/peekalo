@@ -11,6 +11,7 @@ COPY packages/reveal/package.json ./packages/reveal/package.json
 COPY packages/design/package.json ./packages/design/package.json
 COPY packages/web-ui/package.json ./packages/web-ui/package.json
 RUN pnpm --filter @peekalo/web... install --frozen-lockfile --ignore-scripts
+COPY scripts/run-account-cleanup.mjs scripts/operations-runtime.cjs ./scripts/
 COPY apps/web ./apps/web
 COPY packages/contracts ./packages/contracts
 COPY packages/reveal ./packages/reveal
@@ -19,7 +20,10 @@ COPY packages/web-ui ./packages/web-ui
 # Turbopack traces Sharp under a hashed .next alias. Preserve its normal pnpm
 # alias too, so the independent startup preflight can require the same binary.
 RUN pnpm --filter @peekalo/web build \
-    && cp -P apps/web/node_modules/sharp apps/web/.next/standalone/apps/web/node_modules/sharp
+    && node scripts/run-account-cleanup.mjs --build \
+    && cp -P apps/web/node_modules/sharp apps/web/.next/standalone/apps/web/node_modules/sharp \
+    && mkdir -p apps/web/.next/standalone/apps/web/node_modules/@supabase \
+    && cp -P apps/web/node_modules/@supabase/supabase-js apps/web/.next/standalone/apps/web/node_modules/@supabase/supabase-js
 
 FROM node:24.14.1-bookworm-slim AS runner
 WORKDIR /app
@@ -31,6 +35,8 @@ COPY --from=builder --chown=node:node /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=node:node /app/apps/web/public ./apps/web/public
 COPY --chown=node:node scripts/check-hosting-runtime.mjs ./scripts/check-hosting-runtime.mjs
+COPY --from=builder --chown=node:node /app/apps/web/.next/maintenance/account-cleanup.cjs ./apps/web/account-cleanup.cjs
+COPY --chown=node:node scripts/operations-runtime.cjs ./scripts/operations-runtime.cjs
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=6s --start-period=30s --retries=3 \

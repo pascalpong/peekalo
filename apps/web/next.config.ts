@@ -3,6 +3,17 @@ import path from "node:path";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  // The separately packaged maintenance runner uses the same SDK at runtime.
+  serverExternalPackages: ["@supabase/supabase-js"],
+  // Next traces ESM entrypoints; the maintenance artifact requires the pinned
+  // SDK's CJS entrypoints and its small dependency closure as well.
+  outputFileTracingIncludes: {
+    "/api/health": [
+      "../../node_modules/.pnpm/@supabase+*/**",
+      "../../node_modules/.pnpm/iceberg-js@*/**",
+      "../../node_modules/.pnpm/tslib@*/**",
+    ],
+  },
   outputFileTracingRoot: path.resolve(import.meta.dirname, "../.."),
   transpilePackages: ["@peekalo/contracts", "@peekalo/design", "@peekalo/reveal", "@peekalo/web-ui"],
   poweredByHeader: false,

@@ -16,7 +16,7 @@ const app = 'https://app.invalid', actor = '11111111-1111-4111-8111-111111111111
 const path = `${actor}/${post}/33333333-3333-4333-8333-333333333333.jpg`;
 function fixture({ rpc = async () => ({}), auth = async () => actor, fetch = async () => new Response('synthetic normalized bytes') } = {}) {
   const calls = [], events = [];
-  const handlers = load(source, { './sharing': { ...sharing,
+  const handlers = load(source, { './sharing': { ...sharing, endpoint: fn => sharing.endpoint(fn, async () => {}),
     account: async request => { events.push('auth'); return auth(request); }, configuration: () => ({ appUrl: app, url: 'https://db.invalid', service: 'synthetic-server-key' }),
     sameOrigin: request => { if (request.headers.get('origin') !== app) throw new sharing.ApiError(403, 'origin_not_allowed'); },
     guest: () => ({ identity: `g:${actor}`, cookie: 'peekalo_guest=synthetic; HttpOnly; SameSite=Strict' }),

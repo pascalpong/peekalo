@@ -6,6 +6,9 @@ import { validateHostingEnvironment } from './check-hosting-runtime.mjs';
 
 // Synthetic values only: this suite never reads application env files or calls Supabase.
 const fixture = {
+  PEEKALO_DEPLOYMENT: 'development',
+  PEEKALO_EXPECTED_BACKEND_ORIGIN: 'https://project.supabase.co',
+  PEEKALO_SERVING_ENABLED: 'true',
   SUPABASE_URL: 'https://project.supabase.co',
   SUPABASE_ANON_KEY: 'test-public-key',
   SUPABASE_SERVICE_ROLE_KEY: 'test-service-key',

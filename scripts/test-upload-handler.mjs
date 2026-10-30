@@ -52,7 +52,7 @@ function fixture(t, { missingAttempt = false, finish = () => true, fail = () => 
   const handlers = load(handlerSource, {
     '@peekalo/contracts': { ACTIVE_MEDIA_LIMIT: 3 },
     './sharing': {
-      ...sharing,
+      ...sharing, endpoint: fn => sharing.endpoint(fn, async () => {}),
       account: async () => owner,
       database: () => ({ storage: { from: bucket => {
         assert.equal(bucket, 'peekalo-captures');

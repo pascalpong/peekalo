@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string) { super(code); }
+  constructor(public status: number, public code: string, public retryAfter?: number) { super(code); }
 }
 export const uuid = (value: unknown): string => {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new ApiError(400, 'invalid_request');
@@ -44,6 +44,7 @@ export async function account(request: Request, controls: { allowDeleting?: bool
   if (!bearer || bearer.length > 8192) throw new ApiError(401, 'sign_in_required');
   const { data, error } = await database().auth.getUser(bearer);
   if (error || !data.user) throw new ApiError(401, 'sign_in_required');
+  await admitRequest(request, data.user.id);
   if (!controls.allowDeleting && !await rpc<boolean>('peekalo_account_access', { p_actor: data.user.id })) throw new ApiError(403, 'account_deleting');
   if (controls.requireTerms) {
     if (!policyReady()) throw new ApiError(503, 'policy_unavailable');
@@ -60,23 +61,38 @@ export async function body(request: Request) {
     return value as Record<string, unknown>;
   } catch { throw new ApiError(400, 'invalid_request'); }
 }
-export async function limitedBody(request: Request, limit: number) {
-  const advertised = Number(request.headers.get('content-length'));
-  if (advertised > limit) throw new ApiError(413, 'file_too_large');
+export async function limitedBody(request: Request, limit: number, timeoutMs = 10_000) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new ApiError(400, 'invalid_request');
+  const length = request.headers.get('content-length');
+  const refuse = (error: ApiError): never => { void request.body?.cancel().catch(() => {}); throw error; };
+  if (length !== null && (!/^\d+$/.test(length) || !Number.isSafeInteger(Number(length)))) refuse(new ApiError(400, 'invalid_request'));
+  if (length !== null && Number(length) > limit) refuse(new ApiError(413, 'file_too_large'));
+  if (request.signal.aborted) refuse(new ApiError(408, 'request_timeout'));
   if (!request.body) throw new ApiError(400, 'invalid_request');
   const reader = request.body.getReader();
-  let size = 0;
-  const chunks: Uint8Array[] = [];
+  const bytes = Buffer.allocUnsafe(limit);
+  let size = 0; let failure: ApiError | undefined;
+  const interrupt = () => { failure ??= new ApiError(408, 'request_timeout'); void reader.cancel().catch(() => {}); };
+  const timer = setTimeout(interrupt, timeoutMs);
+  const deadline = performance.now() + timeoutMs;
+  request.signal.addEventListener('abort', interrupt, { once: true });
   try {
+    if (request.signal.aborted) interrupt();
     while (true) {
       const { done, value } = await reader.read();
+      if (performance.now() >= deadline) interrupt();
+      if (failure) throw failure;
       if (done) break;
-      size += value.length;
-      if (size > limit) { await reader.cancel(); throw new ApiError(413, 'file_too_large'); }
-      chunks.push(value);
+      if (value.byteLength > limit - size) { void reader.cancel().catch(() => {}); throw new ApiError(413, 'file_too_large'); }
+      bytes.set(value, size); size += value.byteLength;
     }
-  } finally { reader.releaseLock(); }
-  return Buffer.concat(chunks);
+    return bytes.subarray(0, size);
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error instanceof ApiError ? error : new ApiError(400, 'invalid_request');
+  } finally {
+    clearTimeout(timer); request.signal.removeEventListener('abort', interrupt); reader.releaseLock();
+  }
 }
 export function tokenHash(token: unknown) {
   if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new ApiError(404, 'unavailable');
@@ -140,13 +156,44 @@ export function response(value: unknown, request: Request, status = 200, extra?:
 export function options(request: Request) {
   return response({}, request, 200, { 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key, Range' });
 }
-export function endpoint(fn: (request: Request) => Promise<Response>) {
+// Fixed route classes keep attacker-controlled paths out of the limiter keys.
+// Forwarded IP headers are deliberately unused: no trusted ingress contract has
+// been configured. The global lane also bounds credential/cookie rotation.
+export function abuseLane(request: Request) {
+  const path = new URL(request.url).pathname;
+  if (path.startsWith('/api/account/')) return 'deletion';
+  if (path.startsWith('/api/operator/') || path.startsWith('/api/safety/')) return 'safety';
+  if (path === '/api/posts' && request.method === 'POST') return 'upload';
+  if (path.startsWith('/api/view/')) return 'media';
+  return 'api';
+}
+export async function admitRequest(request: Request, actor?: string, call = rpc) {
+  const lane = abuseLane(request);
+  const admit = async (scope: string, value: string) => {
+    const key = scope === 'global' ? '0'.repeat(64) : createHmac('sha256', configuration().secret).update(`abuse:v1:${scope}:${lane}:${value}`).digest('hex');
+    const result = await call<{ allowed: boolean; retryAfter: number }>('peekalo_admit_endpoint', { p_scope: scope, p_lane: lane, p_key: key });
+    if (!result || typeof result.allowed !== 'boolean' || !Number.isInteger(result.retryAfter) || result.retryAfter < 0 || result.retryAfter > 60) throw new ApiError(503, 'sharing_unavailable');
+    if (!result.allowed) throw new ApiError(429, 'rate_limited', Math.max(1, result.retryAfter));
+  };
+  if (actor) { await admit('account', actor); return; }
+  await admit('global', '');
+  const bearer = request.headers.get('authorization');
+  if (bearer) {
+    if (bearer.length > 8192) throw new ApiError(401, 'sign_in_required');
+    await admit('credential', bearer);
+  } else {
+    let identity: string | undefined;
+    try { identity = guest(request).identity; } catch (error) { if (!(error instanceof ApiError && error.status === 401)) throw error; }
+    if (identity) await admit('guest', identity);
+  }
+}
+export function endpoint(fn: (request: Request) => Promise<Response>, admission: (request: Request) => Promise<void> = admitRequest) {
   return async (request: Request) => {
-    try { return await fn(request); }
+    try { await admission(request); return await fn(request); }
     catch (error) {
       const known = error instanceof ApiError ? error : new ApiError(503, 'sharing_unavailable');
       // Deliberately never log request bodies, credentials, database errors or share tokens.
-      return response({ error: known.code }, request, known.status);
+      return response({ error: known.code }, request, known.status, known.status === 429 ? { 'Retry-After': String(known.retryAfter ?? 60) } : undefined);
     }
   };
 }

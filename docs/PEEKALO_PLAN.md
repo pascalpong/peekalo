@@ -163,6 +163,8 @@ Use iOS Universal Links and Android App Links, including domain association file
 
 ## 6. Architecture and repository layout
 
+REL-05 reliability approach keeps serial request-bound processing under measured Free resources, with durable attempt fences/writer barriers and owner retry of the same cached capture after a crash. It does not claim autonomous durable reprocessing after loss of the request/cache. Bounded service-only maintenance reconciles stale/failed/tombstoned objects without removing claims, spent ledgers or active attempts; ambiguous writers need explicit owner/admin settlement. Distributed fixed-policy token buckets protect gateway endpoints before body parsing and add verified-identity limits. The matching image includes a maintenance/watchdog artifact and optional scheduler templates; hosted scheduling, provider alerts and separate production setup remain operational gates. Restore requires a complete independent current restriction checkpoint/log, monotonic claim/spend/deletion replay and fresh cleanup before reopening. Actual measured evidence, recovery bounds and pending provider/device checks are on the build board; operator commands live in the existing README.
+
 | Part | Choice and reason |
 | --- | --- |
 | Mobile | React Native, Expo, TypeScript and Expo Router; one app codebase with platform-specific capture/lifecycle behavior. |

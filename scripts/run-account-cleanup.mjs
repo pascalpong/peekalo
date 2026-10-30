@@ -1,12 +1,5 @@
-/** Repository maintenance CLI. Credentials come only from the process environment;
- * no env files, identifiers or provider responses are printed. REL-05 owns the
- * verified scheduler/alerts/restore drills. Run deliberately with private env:
- * node --env-file=<private-server-env> scripts/run-account-cleanup.mjs
- * Build a portable production runner (TypeScript needed at BUILD time only):
- * node scripts/run-account-cleanup.mjs --build
- * Copy apps/web/.next/maintenance/account-cleanup.cjs beside the deployed web
- * package/node_modules, then run node apps/web/account-cleanup.cjs.
- */
+/** Build/run the complete maintenance artifact. Credentials and secret monitor
+ * hook URLs come only from a restricted environment; nothing sensitive prints. */
 import { createRequire } from 'node:module';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import ts from 'typescript';
@@ -15,12 +8,11 @@ async function compile(path) {
   return ts.transpileModule(await readFile(new URL(path, import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 }
 try {
-  if (process.argv.slice(2).some(value => value !== '--build') || process.argv.length > 3) throw new Error('Unsupported maintenance argument');
-  const sources = {
-    './sharing': await compile('../apps/web/lib/server/sharing.ts'),
-    './private-media-cache': await compile('../apps/web/lib/server/private-media-cache.ts'),
-    './account-cleanup': await compile('../apps/web/lib/server/account-cleanup.ts'),
-  };
+  const mode = process.argv[2];
+  if (process.argv.length > 3 || mode && !['--build', '--monitor'].includes(mode)) throw new Error();
+  const names = ['sharing', 'private-media-cache', 'account-cleanup', 'media-maintenance', 'operations'];
+  const sources = Object.fromEntries(await Promise.all(names.map(async name => [`./${name}`, await compile(`../apps/web/lib/server/${name}.ts`)])));
+  sources['./operations-runtime'] = await readFile(new URL('./operations-runtime.cjs', import.meta.url), 'utf8');
   const runner = `'use strict';
 const sources = ${JSON.stringify(sources)};
 const modules = new Map();
@@ -36,22 +28,24 @@ function load(name) {
 }
 (async () => {
   try {
-    const result = await load('./account-cleanup').createAccountCleanup()();
-    console.log('Account cleanup: '+result.examined+' examined, '+result.completed+' completed, '+result.pending+' pending.');
-    if (result.pending) process.exitCode = 1;
+    if (process.argv.length > 3 || process.argv[2] && process.argv[2] !== '--monitor') throw new Error();
+    const runtime = load('./operations-runtime');
+    const hooks = runtime.validateOperationsEnvironment(process.env);
+    await load('./operations').createOperations({ notify: runtime.createNotifier(hooks) })(process.argv[2] === '--monitor' ? 'monitor' : 'maintenance');
+    console.log('Peekalo operations completed.');
   } catch {
-    console.error('Account cleanup could not finish; inspect restricted operational state.');
+    console.error('Peekalo operations incomplete; inspect restricted operational state.');
     process.exitCode = 1;
   }
 })();
 `;
-  if (process.argv[2] === '--build') {
+  if (mode === '--build') {
     const directory = new URL('../apps/web/.next/maintenance/', import.meta.url);
     await mkdir(directory, { recursive: true });
     await writeFile(new URL('account-cleanup.cjs', directory), runner);
-    console.log('Portable account cleanup runner built; no credentials included.');
+    console.log('Portable operations runner built; no credentials included.');
   } else new Function('require', runner)(require);
 } catch {
-  console.error('Account cleanup could not prepare; inspect restricted operational state.');
+  console.error('Peekalo operations could not prepare; inspect restricted operational state.');
   process.exitCode = 1;
 }

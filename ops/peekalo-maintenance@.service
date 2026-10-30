@@ -1,0 +1,21 @@
+# Install deliberately on an operator-chosen Linux runner; no service is created
+# by this repository. %i is staging or production; never share their env files.
+[Unit]
+Description=Peekalo bounded maintenance (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=peekalo-ops
+Group=peekalo-ops
+EnvironmentFile=/etc/peekalo/%i.env
+WorkingDirectory=/opt/peekalo/current
+ExecStart=/usr/bin/node /opt/peekalo/current/apps/web/account-cleanup.cjs
+TimeoutStartSec=10min
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077

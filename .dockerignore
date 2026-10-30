@@ -22,6 +22,8 @@
 !packages/web-ui/**
 !scripts/
 !scripts/check-hosting-runtime.mjs
+!scripts/run-account-cleanup.mjs
+!scripts/operations-runtime.cjs
 **/node_modules
 **/.next
 **/*.tsbuildinfo

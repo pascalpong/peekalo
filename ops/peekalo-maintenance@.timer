@@ -1,0 +1,11 @@
+[Unit]
+Description=Peekalo quarter-hour maintenance (%i)
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=30
+Unit=peekalo-maintenance@%i.service
+
+[Install]
+WantedBy=timers.target

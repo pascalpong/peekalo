@@ -1,0 +1,11 @@
+[Unit]
+Description=Peekalo five-minute operations watchdog (%i)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+RandomizedDelaySec=15
+Unit=peekalo-watchdog@%i.service
+
+[Install]
+WantedBy=timers.target

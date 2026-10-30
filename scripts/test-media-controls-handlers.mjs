@@ -31,7 +31,7 @@ function fixture({ rpc = async () => ({}), account = async () => owner, storage 
   const calls = []; const events = [];
   const handlers = load(handlerSource, {
     '@peekalo/contracts': { ACTIVE_MEDIA_LIMIT: 3 },
-    './sharing': { ...sharing, account,
+    './sharing': { ...sharing, endpoint: fn => sharing.endpoint(fn, async () => {}), account,
       configuration: () => ({ appUrl: app }),
       linkToken: () => token,
       rpc: async (name, args) => { calls.push({ name, args }); events.push(name); return rpc(name, args); },

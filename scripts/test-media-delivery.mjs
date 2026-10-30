@@ -40,7 +40,7 @@ function fixture(t, { kind = 'photo', path = 'fixture/attempt/photo.jpg', author
   const item = { path, kind, expiresAt: new Date(Date.now() + 2000).toISOString() };
   let rpcCalls = 0;
   const adapter = {
-    ...sharing,
+    ...sharing, endpoint: fn => sharing.endpoint(fn, async () => {}),
     account: async () => { events.push('account'); return ownerId; },
     guest: () => ({ identity: 'g:synthetic-fixture' }),
     configuration: () => ({ url: 'https://storage.invalid', service: 'synthetic-server-key' }),

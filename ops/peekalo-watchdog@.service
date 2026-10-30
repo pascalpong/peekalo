@@ -1,0 +1,19 @@
+[Unit]
+Description=Peekalo independent maintenance watchdog (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=peekalo-ops
+Group=peekalo-ops
+EnvironmentFile=/etc/peekalo/%i.env
+WorkingDirectory=/opt/peekalo/current
+ExecStart=/usr/bin/node /opt/peekalo/current/apps/web/account-cleanup.cjs --monitor
+TimeoutStartSec=1min
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0077
