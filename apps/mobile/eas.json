@@ -1,0 +1,14 @@
+{
+  "cli": { "appVersionSource": "local" },
+  "build": {
+    "store": {
+      "developmentClient": false,
+      "distribution": "store",
+      "credentialsSource": "local",
+      "autoIncrement": false,
+      "env": { "PEEKALO_BUILD_PROFILE": "store", "EXPO_NO_DOTENV": "1" },
+      "android": { "buildType": "app-bundle" },
+      "ios": { "simulator": false }
+    }
+  }
+}

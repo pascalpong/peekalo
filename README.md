@@ -5,6 +5,7 @@ Peekalo is being built as a camera-first photo/video sharing app: capture a phot
 - **[Start here: build board](docs/BUILD_BOARD.md)** — current task, build order, readiness and verification.
 - [Decisions](docs/DECISIONS.md) — confirmed rules and provisional defaults.
 - [Product and engineering plan](docs/PEEKALO_PLAN.md) — detailed architecture and privacy reasoning.
+- [Draft store submission packet](docs/STORE_SUBMISSION.md) — guarded store configuration, disclosure worksheet, listing and open distribution prerequisites.
 - [MVP backlog](docs/MVP_BACKLOG.md) — feature checklist and acceptance criteria.
 - [Project instructions](AGENTS.md) — working rules for coding assistants.
 

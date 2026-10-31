@@ -17,3 +17,13 @@ apps/mobile/android/
 .cache/
 test-results/
 playwright-report/
+# Optional store signing inputs and outputs are always private/local.
+credentials.json
+*.jks
+*.keystore
+*.p12
+*.p8
+*.mobileprovision
+*.ipa
+*.aab
+*.apk
