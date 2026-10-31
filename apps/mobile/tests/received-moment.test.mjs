@@ -15,7 +15,7 @@ const epoch = Date.parse('2026-10-23T06:00:00Z');
 const leaseId = '11111111-1111-4111-8111-111111111111';
 const postId = '22222222-2222-4222-8222-222222222222';
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
-const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+const deferred = () => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; };
 class SharingError extends Error { constructor(message, code = 'unavailable') { super(message); this.code = code; } }
 function fakeClock() {
   let now = 0, sequence = 0;
@@ -45,8 +45,9 @@ function find(node, predicate) {
   return predicate(node) ? node : find(node.props?.children, predicate);
 }
 const text = value => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' || typeof value === 'number' ? String(value) : '';
-function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true, captureStatus = 'clear', status } = {}) {
+function harness(t, { request, skew = 0, signedIn = true, platform = 'android', protection = {}, kind = 'photo', videoStatus = 'readyToPlay', imageReady = true, captureStatus = 'clear', status, photoLoad } = {}) {
   const players = [], playbackEvents = [];
+  const photoCalls = [];
   let videoChild = null;
   let loadedImageSource = null;
   const statusCalls = [];
@@ -55,7 +56,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
   let captureState = captureStatus;
   const captureAllowed = () => platform !== 'android' || captureState === 'clear' || captureState === 'unsupported';
   let session = signedIn ? { user: { id: 'account-a' }, access_token: 'fixture-token-a' } : null;
-  let cursor = 0, tree, component, mounted = true, focused = true, renderPending = false;
+  let cursor = 0, tree, component, mounted = true, focused = true, renderPending = false, effectsPaused = false;
   const pendingEffects = new Map();
   const scheduleRender = () => {
     if (renderPending || !mounted) return;
@@ -70,6 +71,14 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
       pendingEffects.set(index, fn);
     }
   };
+  const runEffects = () => {
+    for (const [index, fn] of pendingEffects) {
+      const hook = hooks[index];
+      hook.cleanup?.(); hook.cleanup = undefined;
+      if (hook.kind !== 'focus' || focused) { hook.cleanup = fn(); hook.active = true; }
+    }
+    pendingEffects.clear();
+  };
   const render = () => {
     cursor = 0; tree = component({ postId, kind });
     renderVideo();
@@ -80,12 +89,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
       loadedImageSource = imageKey;
       globalThis.queueMicrotask(() => image.props.onLoad?.());
     }
-    for (const [index, fn] of pendingEffects) {
-      const hook = hooks[index];
-      hook.cleanup?.(); hook.cleanup = undefined;
-      if (hook.kind !== 'focus' || focused) { hook.cleanup = fn(); hook.active = true; }
-    }
-    pendingEffects.clear();
+    if (!effectsPaused) runEffects();
   };
   const react = {
     useState(initial) {
@@ -201,6 +205,10 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
       captureGuard: { subscribe(listener) { captureListeners.add(listener); return () => captureListeners.delete(listener); } },
       captureGuardAllowsReveal: captureAllowed,
     },
+    '../lib/private-photo': { loadPrivatePhoto(options) {
+      photoCalls.push(options);
+      return photoLoad ? photoLoad(options, photoCalls.length) : Promise.resolve(`data:image/jpeg;base64,${Buffer.from(`generated fixture ${photoCalls.length}`).toString('base64')}`);
+    } },
     './ui': { colors: {}, tokens: { font: { display: 'fixture-font' } } },
   };
   class ClientDate extends Date { static now() { return epoch + time.now() + skew; } }
@@ -217,7 +225,9 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
   const unmount = () => { if (!mounted) return; destroyVideo(); mounted = false; for (const hook of hooks) hook?.cleanup?.(); };
   t.after(unmount);
   return {
-    time, calls, statusCalls, grant, ready: flush, unmount, unfocus, refocus, players, playbackEvents,
+    time, calls, statusCalls, photoCalls, grant, ready: flush, unmount, unfocus, refocus, players, playbackEvents,
+    pauseEffects() { effectsPaused = true; },
+    flushEffects() { effectsPaused = false; runEffects(); },
     capture(status, notify = true) { captureState = status; if (notify) for (const listener of captureListeners) listener(); },
     captureListenerCount: () => captureListeners.size,
     press() { const card = find(tree, node => Boolean(node.props?.onResponderGrant)); if (card.props.onStartShouldSetResponder()) card.props.onResponderGrant({ nativeEvent: { touches: [{}] } }); },
@@ -262,16 +272,84 @@ for (const interruption of ['release', 'blur', 'background', 'unfocus', 'unmount
   });
 }
 
+for (const platform of ['android', 'ios']) {
+  test(`${platform} keeps photos covered until memory loading and Image decoding finish, with no network Image source`, async t => {
+    const pending = deferred(); const h = harness(t, { platform, imageReady: false, photoLoad: () => pending.promise });
+    await h.ready(); assert.equal(h.photoCalls.length, 0);
+    h.press(); await flush();
+    assert.equal(h.photoCalls.length, 1); assert(!h.image()); assert(!h.imageVisible());
+    assert.equal(h.photoCalls[0].uri, `${origin}/api/view/media/${leaseId}`);
+    assert.equal(h.photoCalls[0].expectedOrigin, `${origin}/`);
+    const dataUri = 'data:image/jpeg;base64,/9j/';
+    pending.resolve(dataUri); await flush();
+    assert.equal(h.image().props.source.uri, dataUri);
+    assert.deepEqual(Object.keys(h.image().props.source), ['uri'], 'Bearer and HTTP URL never enter the native Image source');
+    assert(!h.imageVisible(), 'Memory transfer is separate from native Image decoding');
+    h.image().props.onLoad(); await flush(); assert(h.imageVisible());
+    h.release(); assert(h.photoCalls[0].signal.aborted, 'Release aborts before React cleanup'); await flush(); assert(!h.image());
+  });
+}
+
+for (const interruption of ['release', 'blur', 'background', 'unfocus', 'unmount', 'account']) {
+  test(`${interruption} synchronously aborts memory photo loading and rejects its late result`, async t => {
+    const pending = deferred(); const h = harness(t, { photoLoad: () => pending.promise });
+    await h.ready(); h.press(); await flush();
+    assert.equal(h.photoCalls.length, 1); assert(!h.image());
+    if (interruption === 'account') h.account('account-b'); else h[interruption]();
+    assert(h.photoCalls[0].signal.aborted, 'Do not wait for React effect cleanup to cancel private body/read work');
+    pending.resolve('data:image/jpeg;base64,/9j/'); await flush();
+    assert(!h.image()); assert(!h.imageVisible());
+  });
+}
+
+for (const interruption of ['release', 'account']) {
+  for (const result of ['resolve', 'reject']) {
+    test(`late memory-photo ${result} after ${interruption} cannot replace or stop the next hold`, async t => {
+      const old = deferred();
+      const currentData = 'data:image/jpeg;base64,/9j/';
+      const h = harness(t, { photoLoad: (_options, count) => count === 1 ? old.promise : Promise.resolve(currentData) });
+      await h.ready(); h.press(); await flush(); assert.equal(h.photoCalls.length, 1);
+      if (interruption === 'account') h.account('account-b'); else h.release();
+      await flush(); h.press(); await flush();
+      assert.equal(h.photoCalls.length, 2); assert(h.imageVisible());
+      assert(h.photoCalls[0].signal.aborted); assert(!h.photoCalls[1].signal.aborted);
+      if (result === 'resolve') old.resolve('data:image/jpeg;base64,AAAA'); else old.reject(new Error('old private transfer failure'));
+      await flush();
+      assert.equal(h.image().props.source.uri, currentData); assert(h.imageVisible());
+      assert(!h.photoCalls[1].signal.aborted); assert.match(h.message(), /Revealed/);
+    });
+  }
+}
+
+test('memory photo transport failure stays covered and requires a deliberate new hold', async t => {
+  const h = harness(t, { photoLoad: () => Promise.reject(new Error('native private detail')) });
+  await h.ready(); h.press(); await flush();
+  assert(!h.image()); assert(!h.imageVisible()); assert(h.photoCalls[0].signal.aborted);
+  assert.match(h.message(), /couldn’t load/); assert(!h.message().includes('native private detail'));
+  await h.time.advance(5000); assert.equal(h.calls.length, 1);
+});
+
+test('release between source commit and its passive effect prevents any obsolete bearer photo fetch', async t => {
+  const h = harness(t);
+  await h.ready(); h.pauseEffects(); h.press(); await flush();
+  assert.equal(h.calls.length, 1); assert.equal(h.photoCalls.length, 0);
+  h.release(); h.flushEffects(); await flush();
+  assert.equal(h.photoCalls.length, 0); assert(!h.image());
+});
+
 test('an account change hides active media and the next account cannot reuse the old bearer or cached lease', async t => {
   const h = harness(t);
   await h.ready(); h.press(); await flush();
-  assert.equal(h.image().props.source.headers.Authorization, 'Bearer fixture-token-a');
+  assert.equal(h.photoCalls.at(-1).authorization, 'Bearer fixture-token-a');
+  assert.match(h.image().props.source.uri, /^data:image\/jpeg;base64,/);
+  assert.deepEqual(Object.keys(h.image().props.source), ['uri']);
   h.account('account-b'); await flush();
   assert(!h.image());
   h.press(); await flush();
   assert.equal(h.calls.length, 2, 'Another account requires a fresh server grant');
   assert.equal(h.calls[1].account, 'account-b');
-  assert.equal(h.image().props.source.headers.Authorization, 'Bearer fixture-token-b');
+  assert.equal(h.photoCalls.at(-1).authorization, 'Bearer fixture-token-b');
+  assert.deepEqual(Object.keys(h.image().props.source), ['uri']);
 });
 
 test('switching account while a grant is pending aborts it and ignores the old account reply', async t => {
@@ -610,7 +688,8 @@ test('a stale photo load cannot reveal the next account image or stop its curren
   assert(h.rawImage()); assert(!h.imageVisible());
   h.rawImage().props.onLoad(); await flush();
   assert(h.imageVisible());
-  assert.equal(h.rawImage().props.source.headers.Authorization, 'Bearer fixture-token-b');
+  assert.equal(h.photoCalls.at(-1).authorization, 'Bearer fixture-token-b');
+  assert.deepEqual(Object.keys(h.rawImage().props.source), ['uri']);
 });
 
 test('video readiness loss pauses immediately and readiness recovery requires a live lease', async t => {

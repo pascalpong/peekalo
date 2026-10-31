@@ -7,6 +7,7 @@ import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 're
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../lib/sharing-client';
 import { colors, tokens } from './ui';
 import { captureGuard, captureGuardAllowsReveal } from '../lib/capture-guard';
+import { loadPrivatePhoto } from '../lib/private-photo';
 
 type Lease = { leaseId: string; mediaUrl: string; grantedMs: number; remainingMs: number; expiresAt: string };
 type Reveal = { uri: string; authorization: string; deadline: number; remainingMs: number };
@@ -71,6 +72,8 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   // One transport per deliberate hold: lease gaps cover/pause it without
   // restarting native buffering. Release/auth/navigation still discard it.
   const [mediaSource, setMediaSource] = useState<MediaSource | null>(null);
+  const [photoData, setPhotoData] = useState<{ uri: string; turn: number } | null>(null);
+  const photoRequest = useRef<AbortController | null>(null);
   const [mediaReady, setMediaReady] = useState(false);
   const ready = useRef(false);
   const [remaining, setRemaining] = useState<number | null>(null);
@@ -103,6 +106,8 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     held.current = false;
     abort.current?.abort();
     abort.current = null;
+    photoRequest.current?.abort();
+    photoRequest.current = null;
     if (timer.current) clearTimeout(timer.current);
     if (expiry.current) clearTimeout(expiry.current);
     timer.current = null;
@@ -115,6 +120,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       if (lease) setRemaining(lease.remainingMs);
       setReveal(null);
       setMediaSource(null);
+      setPhotoData(null);
       ready.current = false;
       setMediaReady(false);
       setBusy(false);
@@ -344,6 +350,23 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     if (!mediaSource || mediaSource.turn !== epoch.current || !held.current) return;
     stop(); setMessage('The moment couldn’t load. Hold to try again.');
   }, [mediaSource, stop]);
+  useEffect(() => {
+    if (kind !== 'photo' || !mediaSource) return;
+    const controller = new AbortController();
+    const current = () => mounted.current && !controller.signal.aborted && mediaSource.turn === epoch.current && held.current &&
+      captureGuardAllowsReveal() && AppState.currentState === 'active';
+    // A stop can fence this committed source before its passive effect runs.
+    // Do not begin even the authorized transport from that obsolete hold.
+    if (!current()) { controller.abort(); return; }
+    photoRequest.current = controller;
+    void loadPrivatePhoto({ uri: mediaSource.uri, authorization: mediaSource.authorization, expectedOrigin: resolveApiUrl('/'), signal: controller.signal })
+      .then(uri => { if (current()) setPhotoData({ uri, turn: mediaSource.turn }); })
+      .catch(() => { if (current()) mediaFailed(); });
+    return () => {
+      controller.abort();
+      if (photoRequest.current === controller) photoRequest.current = null;
+    };
+  }, [kind, mediaFailed, mediaSource]);
   return <View style={styles.section}>
     <Text style={styles.budget}>{remaining === null ? 'Viewing time not checked' : `${(Math.ceil(remaining / 100) / 10).toFixed(1)}s left`}</Text>
     <View style={styles.card} accessible accessibilityRole="button" accessibilityLabel="Hold to reveal this moment"
@@ -359,8 +382,8 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       }}>
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
         {mediaSource ? <View style={[StyleSheet.absoluteFill, { opacity: reveal && mediaReady ? 1 : 0 }]}>
-          {kind === 'photo' ? <Image source={{ uri: mediaSource.uri, headers: { Authorization: mediaSource.authorization }, cache: 'reload' }}
-            style={StyleSheet.absoluteFill} resizeMode="contain" onLoad={() => mediaReadyChanged(true)} onError={mediaFailed} />
+          {kind === 'photo' ? photoData?.turn === mediaSource.turn ? <Image source={{ uri: photoData.uri }}
+            style={StyleSheet.absoluteFill} resizeMode="contain" onLoad={() => mediaReadyChanged(true)} onError={mediaFailed} /> : null
             : <ReceivedVideo source={mediaSource} reveal={reveal} canPlay={canPlay} onReady={mediaReadyChanged} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />}
         </View> : null}
         {!reveal || !mediaReady ? <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining === null ? 'Checking viewing time' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View> : null}
