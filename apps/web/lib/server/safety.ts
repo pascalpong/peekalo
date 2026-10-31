@@ -33,13 +33,17 @@ export const reports = endpoint(async request => {
   const input = await body(request);
   const reasons = ['child_safety', 'sexual_content', 'violence', 'harassment', 'privacy', 'spam', 'other'];
   if (typeof input.reason !== 'string' || !reasons.includes(input.reason) ||
-      Object.keys(input).some(key => !['postId', 'accountId', 'username', 'token', 'reason', 'details'].includes(key)) ||
-      [input.postId, input.accountId, input.username, input.token].filter(value => value !== undefined).length !== 1) throw new ApiError(400, 'invalid_request');
+      Object.keys(input).some(key => !['postId', 'accountId', 'username', 'token', 'messageId', 'commentId', 'reason', 'details'].includes(key)) ||
+      [input.postId, input.accountId, input.username, input.token, input.messageId, input.commentId].filter(value => value !== undefined).length !== 1) throw new ApiError(400, 'invalid_request');
   const details = text(input.details);
   let identity: string; let cookie: string | undefined;
   if (request.headers.has('authorization')) identity = `a:${await account(request)}`;
   else { sameOrigin(request); const viewer = guest(request, true); identity = viewer.identity; cookie = viewer.cookie; }
-  if (input.accountId !== undefined && !identity.startsWith('a:')) throw new ApiError(401, 'sign_in_required');
+  if ((input.accountId !== undefined || input.messageId !== undefined || input.commentId !== undefined) && !identity.startsWith('a:')) throw new ApiError(401, 'sign_in_required');
+  if (input.messageId !== undefined || input.commentId !== undefined) {
+    return response(await rpc('peekalo_social_report', { p_actor: identity.slice(2), p_kind: input.messageId === undefined ? 'comment' : 'message',
+      p_item: uuid(input.messageId ?? input.commentId), p_reason: input.reason, p_details: details }), request);
+  }
   const result = await rpc('peekalo_report', { p_identity: identity, p_kind: input.username === undefined && input.accountId === undefined ? 'post' : 'account',
     p_reason: input.reason, p_details: details, p_post: input.postId === undefined ? null : uuid(input.postId),
     p_username: input.username === undefined ? null : username(input.username), p_hash: input.token === undefined ? null : tokenHash(input.token),

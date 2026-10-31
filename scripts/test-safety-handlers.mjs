@@ -37,9 +37,9 @@ test('report target and identity are derived by server; raw link token is hashed
   assert.deepEqual(f.calls, [{ name: 'peekalo_report', args: { p_identity: `g:${actor}`, p_kind: 'post', p_reason: 'child_safety', p_details: 'Review this concern', p_post: null, p_username: null, p_hash: crypto.createHash('sha256').update('a'.repeat(43)).digest('hex'), p_account: null } }]);
   assert(!JSON.stringify(await result.json()).includes('aaaa'));
 });
-test('report input rejects unsupported future targets, mixed targets, oversized details and forged actors', async () => {
+test('report input rejects mixed targets, oversized details and forged actors', async () => {
   const f = fixture();
-  for (const input of [{ postId: post, username: 'somebody', reason: 'spam' }, { messageId: post, reason: 'spam' }, { postId: post, reason: 'spam', identity: `a:${post}` }, { postId: post, reason: 'spam', details: 'a'.repeat(1001) }, { postId: post, reason: 'bad' }]) {
+  for (const input of [{ postId: post, username: 'somebody', reason: 'spam' }, { messageId: post, postId: post, reason: 'spam' }, { postId: post, reason: 'spam', identity: `a:${post}` }, { postId: post, reason: 'spam', details: 'a'.repeat(1001) }, { postId: post, reason: 'bad' }]) {
     assert.equal((await f.handlers.reports(f.request(input))).status, 400);
   }
   assert.equal(f.calls.length, 0);
@@ -104,4 +104,14 @@ test('support config publishes only valid real configuration and shows missing f
   assert.equal(blocked.status, 200); assert.equal(f.calls.at(-1).args.p_target, post); assert.equal(f.calls.at(-1).args.p_username, null);
   assert.equal((await f.handlers.reports(f.request({ accountId: post, reason: 'other' }, { auth: false }))).status, 401);
   assert.equal((await f.handlers.blocks(f.request({ accountId: post, username: 'sender' }))).status, 400);
+});
+
+test('social reports require native account authorization and a single audience-scoped target', async () => {
+  const f = fixture();
+  for (const target of ['messageId', 'commentId']) {
+    assert.equal((await f.handlers.reports(f.request({ [target]: post, reason: 'privacy', details: 'Generated concern' }, { auth: false }))).status, 401);
+    const result = await f.handlers.reports(f.request({ [target]: post, reason: 'privacy', details: 'Generated concern' }));
+    assert.equal(result.status, 200); noStore(result);
+    assert.deepEqual(f.calls.at(-1), { name: 'peekalo_social_report', args: { p_actor: actor, p_kind: target === 'messageId' ? 'message' : 'comment', p_item: post, p_reason: 'privacy', p_details: 'Generated concern' } });
+  }
 });

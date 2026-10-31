@@ -1,9 +1,10 @@
 'use client';
 
+import { SocialReview } from './social-review';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 type PendingPost = { postId: string; username: string; kind: 'photo' | 'video'; status: string; createdAt: string };
-type SafetyReport = { reportId: string; postId?: string | null; username?: string | null; reason: string; details?: string | null; createdAt: string; state: string };
+type SafetyReport = { reportId: string; targetKind?: string; targetId?: string; postId?: string | null; username?: string | null; reason: string; details?: string | null; createdAt: string; state: string };
 type Queue = { posts: PendingPost[]; reports: SafetyReport[]; profiles?: { username: string; reviewState: string; createdAt?: string }[] };
 type Audit = { id: string; operatorId: string; event: string; targetId: string | null; note: string | null; createdAt: string };
 type Media = { postId: string; url: string; kind: 'photo' | 'video' };
@@ -17,6 +18,7 @@ export function OperatorConsole() {
   const [busy, setBusy] = useState(false);
   const [media, setMedia] = useState<Media | null>(null);
   const [selected, setSelected] = useState('');
+  const [socialTarget, setSocialTarget] = useState<{ kind: 'message' | 'comment'; itemId: string } | null>(null);
   const [reason, setReason] = useState('');
   const [accountName, setAccountName] = useState('');
   const [accountReason, setAccountReason] = useState('');
@@ -54,7 +56,7 @@ export function OperatorConsole() {
     setReason('');
     setAccountName('');
     setAccountReason('');
-    setAudit(null);
+    setAudit(null); setSocialTarget(null);
     setStatus('Operator session cleared.');
   };
   useEffect(() => {
@@ -207,6 +209,7 @@ export function OperatorConsole() {
       <p role="status" aria-live="polite">{status}</p>
     </section>
     {queue && <>
+      <SocialReview key={sessionTurn.current} request={request} target={socialTarget} />
       <section className="safety-panel"><h2>Pending profile names</h2><p>New or changed usernames require manual approval before publication. Reject names that violate the standards. This decision does not approve the account&apos;s moments.</p><div className="operator-list">{(queue.profiles ?? []).map(profile => <ProfileItem key={profile.username} username={profile.username} busy={busy} decide={accountAction} />)}</div>{!queue.profiles?.length && <p>No profile names awaiting review.</p>}</section>
       <section className="safety-panel"><h2>Awaiting pre-publication review</h2><p>Review each moment against the <a href="/safety" target="_blank" rel="noreferrer">safety standards</a> before approval. No automatic filtering provider is connected. An approval permits sharing; it does not create a recipient grant or reset viewing budgets.</p>
         {!queue.posts.length && <p>No moments in this queue.</p>}
@@ -224,7 +227,7 @@ export function OperatorConsole() {
       </section>}
       <section className="safety-panel"><h2>Reports and feedback</h2><p>Assess child-safety reports first. Taking down a moment and recording the report response are separate actions. Account-level enforcement and any legally required escalation must be handled through the restricted operating process.</p>
         {!queue.reports.length && <p>No open reports in this queue.</p>}
-        <div className="operator-list">{queue.reports.map(report => <ReportItem key={report.reportId} report={report} busy={busy} inspect={inspect} resolve={resolve} />)}</div>
+        <div className="operator-list">{queue.reports.map(report => <ReportItem key={report.reportId} report={report} busy={busy} inspect={inspect} resolve={resolve} inspectSocial={setSocialTarget} />)}</div>
       </section>
       <section className="safety-panel"><h2>Account enforcement</h2><p>Use the reported account&apos;s current username. Suspension restricts account activity and future media access. Restoration does not undo revoked sharing grants or reset allowances.</p><div className="safety-form"><label>Account username<input value={accountName} onChange={event => setAccountName(event.target.value.toLowerCase().replace(/^@/, ''))} maxLength={24} disabled={busy} autoComplete="off" /></label><label>Enforcement or restoration reason<textarea value={accountReason} onChange={event => setAccountReason(event.target.value)} maxLength={1000} rows={3} disabled={busy} /></label></div><div className="safety-actions"><button type="button" className="safety-button" disabled={busy || !/^[a-z0-9_]{3,24}$/.test(accountName) || !accountReason.trim()} onClick={() => void accountAction('account', accountName, 'suspend', accountReason)}>Suspend account</button><button type="button" className="safety-button" disabled={busy || !/^[a-z0-9_]{3,24}$/.test(accountName) || !accountReason.trim()} onClick={() => void accountAction('account', accountName, 'restore', accountReason)}>Restore account</button></div></section>
       <section className="safety-panel"><h2>Restricted audit</h2><p>Review access and decisions are recorded with the operator identity. Keep sensitive media and unnecessary personal information out of audit notes.</p><button type="button" className="safety-button" disabled={busy} onClick={() => void loadAudit()}>Load audit log</button>{audit && <div className="operator-list">{audit.map(item => <article key={item.id}><h3>{item.event}</h3><p className="operator-id">Operator {item.operatorId} · target {item.targetId ?? 'queue'}</p><p>{item.createdAt}</p>{item.note && <p className="operator-details">{item.note}</p>}</article>)}</div>}</section>
@@ -232,9 +235,9 @@ export function OperatorConsole() {
   </>;
 }
 
-function ReportItem({ report, busy, inspect, resolve }: { report: SafetyReport; busy: boolean; inspect: (postId: string) => Promise<void>; resolve: (id: string, state: 'resolved' | 'dismissed', note: string) => Promise<void> }) {
+function ReportItem({ report, busy, inspect, resolve, inspectSocial }: { report: SafetyReport; busy: boolean; inspect: (postId: string) => Promise<void>; resolve: (id: string, state: 'resolved' | 'dismissed', note: string) => Promise<void>; inspectSocial: (target: { kind: 'message' | 'comment'; itemId: string }) => void }) {
   const [note, setNote] = useState('');
-  return <article><h3>{report.reason.replaceAll('_', ' ')} · {report.state}</h3><p className="operator-id">Report {report.reportId}</p>{report.username && <p>Account: @{report.username}</p>}<p><time dateTime={report.createdAt}>{report.createdAt}</time></p>{report.details && <p className="operator-details">{report.details}</p>}{report.postId && <button className="safety-button" type="button" disabled={busy} onClick={() => void inspect(report.postId!)}>Review reported moment</button>}<label className="safety-form">Response and escalation note<textarea value={note} onChange={event => setNote(event.target.value)} maxLength={1000} rows={3} disabled={busy} placeholder="Record action and minimal escalation reference. Do not include copies of media." /></label><div className="safety-actions"><button className="safety-button" type="button" disabled={busy || !note.trim()} onClick={() => void resolve(report.reportId, 'resolved', note)}>Record response and resolve</button><button className="safety-button" type="button" disabled={busy || !note.trim()} onClick={() => void resolve(report.reportId, 'dismissed', note)}>Dismiss with reason</button></div></article>;
+  return <article><h3>{report.reason.replaceAll('_', ' ')} · {report.state}</h3><p className="operator-id">Report {report.reportId}</p>{report.username && <p>Account: @{report.username}</p>}<p><time dateTime={report.createdAt}>{report.createdAt}</time></p>{report.details && <p className="operator-details">{report.details}</p>}{report.postId && <button className="safety-button" type="button" disabled={busy} onClick={() => void inspect(report.postId!)}>Review reported moment</button>}{(report.targetKind === 'message' || report.targetKind === 'comment') && report.targetId && <button className="safety-button" type="button" disabled={busy} onClick={() => inspectSocial({ kind: report.targetKind as 'message' | 'comment', itemId: report.targetId! })}>Review reported text privately</button>}<label className="safety-form">Response and escalation note<textarea value={note} onChange={event => setNote(event.target.value)} maxLength={1000} rows={3} disabled={busy} placeholder="Record action and minimal escalation reference. Do not include copies of media." /></label><div className="safety-actions"><button className="safety-button" type="button" disabled={busy || !note.trim()} onClick={() => void resolve(report.reportId, 'resolved', note)}>Record response and resolve</button><button className="safety-button" type="button" disabled={busy || !note.trim()} onClick={() => void resolve(report.reportId, 'dismissed', note)}>Dismiss with reason</button></div></article>;
 }
 
 function ProfileItem({ username, busy, decide }: { username: string; busy: boolean; decide: (path: 'account' | 'profile', username: string, action: string, note: string) => Promise<void> }) {

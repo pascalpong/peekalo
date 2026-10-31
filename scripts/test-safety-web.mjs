@@ -8,7 +8,7 @@ const { Response, EventTarget, Event, Headers, AbortController, Blob } = globalT
 
 const flush = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
-const sources = Object.fromEntries(await Promise.all(['safety-report', 'operator-console'].map(async name => [name, ts.transpileModule(await readFile(new URL(`../apps/web/components/${name}.tsx`, import.meta.url), 'utf8'), {
+const sources = Object.fromEntries(await Promise.all(['safety-report', 'operator-console', 'social-review'].map(async name => [name, ts.transpileModule(await readFile(new URL(`../apps/web/components/${name}.tsx`, import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText])));
 function walk(node, predicate) {
@@ -17,7 +17,7 @@ function walk(node, predicate) {
   return predicate(node) ? node : walk(node.props?.children, predicate);
 }
 function harness(t, name, props = {}, fetcher = async () => Response.json({ received: true })) {
-  const requests = [], cells = [], effects = [], cleanups = [], created = [], revoked = [];
+  const requests = [], cells = [], effects = [], cleanups = [], created = [], revoked = [], timers = new Set();
   const window = Object.assign(new EventTarget(), { location: { hash: `#${'A'.repeat(43)}` } });
   const document = Object.assign(new EventTarget(), { visibilityState: 'visible' });
   let cursor = 0, tree, component, mounted = true;
@@ -35,15 +35,18 @@ function harness(t, name, props = {}, fetcher = async () => Response.json({ rece
   const exported = {};
   vm.runInNewContext(sources[name], {
     exports: exported, window, document, Headers, AbortController,
+    setTimeout(callback) { timers.add(callback); return callback; }, clearTimeout(callback) { timers.delete(callback); },
     URL: { createObjectURL(blob) { const url = `blob:fixture-${created.length + 1}`; created.push({ blob, url }); return url; }, revokeObjectURL(url) { revoked.push(url); } },
     fetch: (url, init) => { const entry = { url, ...init }; requests.push(entry); return fetcher(entry); },
     require(path) {
+      if (path === './social-review') return { SocialReview: 'SocialReview' };
       if (path === 'react') return react;
       if (path === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
       throw new Error(`Unexpected import ${path}`);
     },
   });
-  component = name === 'safety-report' ? exported.SafetyReport : exported.OperatorConsole;
+  component = name === 'safety-report' ? exported.SafetyReport : name === 'social-review' ? exported.SocialReview : exported.OperatorConsole;
+  if (name === 'social-review') props.request = (url, init) => { const entry = { url, ...init }; requests.push(entry); return fetcher(entry); };
   render();
   for (const effect of effects.splice(0)) { const cleanup = effect(); if (cleanup) cleanups.push(cleanup); }
   const find = predicate => walk(tree, predicate);
@@ -51,7 +54,7 @@ function harness(t, name, props = {}, fetcher = async () => Response.json({ rece
   const unmount = () => { if (!mounted) return; mounted = false; for (const cleanup of cleanups.splice(0)) cleanup(); tree = undefined; };
   t.after(unmount);
   return {
-    requests, created, revoked, find, button, unmount,
+    requests, created, revoked, find, button, unmount, expire() { for (const callback of [...timers]) callback(); timers.clear(); },
     tree: () => tree, text: () => JSON.stringify(tree),
     click(text) { const result = button(text); assert(result, `Missing button ${text}`); result.props.onClick(); },
     async submit() { const form = find(node => node.type === 'form'); assert(form); await form.props.onSubmit({ preventDefault() {} }); await flush(); },
@@ -185,4 +188,48 @@ test('reports require deliberate reason selection instead of automatically class
   await h.submit(); assert.equal(h.requests.length, 0);
   h.change('select', 'harassment'); await h.submit();
   assert.equal(JSON.parse(h.requests[0].body).reason, 'harassment');
+});
+
+test('private operator text inspection clears on blur and fences a late body response', async t => {
+  const item = { kind: 'message', itemId: postId, authorAccountId: postId, status: 'moderation_pending', createdAt: '2026-10-30T00:00:00Z' };
+  const pending = deferred();
+  const h = harness(t, 'social-review', {}, entry => entry.url === '/api/operator/social/epoch' ? Promise.resolve(Response.json({epoch:1})) : entry.url === '/api/operator/social' ? Promise.resolve(Response.json({ items: [item], nextCursor: null })) : pending.promise);
+  h.click('Load text queue'); await flush();
+  h.click('Review text privately'); await flush();
+  h.blur(); pending.resolve(Response.json({ body: 'Private generated message', status: 'moderation_pending' })); await flush();
+  assert(!h.text().includes('Private generated message'));
+  assert(!h.text().includes('Private message assessment'));
+});
+test('operator text decisions close bodies before IO and carry only explicit assessment', async t => {
+  const item = { kind: 'comment', itemId: postId, authorAccountId: postId, status: 'moderation_pending', createdAt: '2026-10-30T00:00:00Z' };
+  const h = harness(t, 'social-review', {}, async entry => entry.url === '/api/operator/social/epoch' ? Response.json({epoch:1}) : entry.url === '/api/operator/social' ? Response.json({ items: [item], nextCursor: null }) : entry.method === 'POST' ? Response.json({ status: 'approved' }) : Response.json({ body: 'Private generated comment', status: 'moderation_pending' }));
+  h.click('Load text queue'); await flush(); h.click('Review text privately'); await flush();
+  assert(h.text().includes('Private generated comment'));
+  h.change('textarea', 'Independent generated review'); h.click('Approve');
+  assert(!h.text().includes('Private generated comment')); await flush();
+  assert.deepEqual(JSON.parse(h.requests.at(-1).body), { action: 'approve', reason: 'Independent generated review' });
+  assert(!h.requests.at(-1).body.includes('Private generated comment'));
+});
+
+test('private operator text expires while foreground and late safety epoch changes deny rendering', async t => {
+  const item = { kind: 'comment', itemId: postId, status: 'moderation_pending', createdAt: '2026-10-30T00:00:00Z' };
+  let epoch = 1;
+  const h = harness(t, 'social-review', {}, async entry => entry.url === '/api/operator/social/epoch' ? Response.json({epoch}) : entry.url === '/api/operator/social' ? Response.json({items:[item],nextCursor:null}) : Response.json({body:'Generated private review text',status:'moderation_pending'}));
+  h.click('Load text queue'); await flush(); h.click('Review text privately'); await flush();
+  h.change('textarea', 'Assessment draft'); assert(h.text().includes('Generated private review text'));
+  h.expire(); assert(!h.text().includes('Generated private review text')); assert(h.text().includes('Assessment draft'));
+  let calls=0;
+  const stale = harness(t, 'social-review', {}, async entry => entry.url === '/api/operator/social/epoch' ? Response.json({epoch:++calls}) : entry.url === '/api/operator/social' ? Response.json({items:[item],nextCursor:null}) : Response.json({body:'Stale generated text',status:'approved'}));
+  stale.click('Load text queue'); await flush(); stale.click('Review text privately'); await flush(); assert(!stale.text().includes('Stale generated text'));
+});
+
+test('operator membership revocation after private read denies the final delivery fence', async t => {
+  const item = { kind: 'message', itemId: postId, status: 'approved', createdAt: '2026-10-31T00:00:00Z' }; let checks=0;
+  const h = harness(t, 'social-review', {}, async entry => {
+    if (entry.url === '/api/operator/social/epoch') return ++checks===1 ? Response.json({epoch:1}) : Response.json({error:'operator_required'},{status:403});
+    if (entry.url === '/api/operator/social') return Response.json({items:[item],nextCursor:null});
+    return Response.json({body:'Generated body after operator revocation',status:'approved'});
+  });
+  h.click('Load text queue'); await flush(); h.click('Review text privately'); await flush();
+  assert.equal(checks,2); assert(!h.text().includes('Generated body after operator revocation'));
 });

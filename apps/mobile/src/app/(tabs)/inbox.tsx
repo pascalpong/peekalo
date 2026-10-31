@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Button, colors, Eyebrow, Screen, typography } from '../../components/ui';
 import { ShareCapture } from '../../components/share-capture';
+import { Conversations, MomentComments } from '../../components/social';
 import { ReceivedMoment } from '../../components/received-moment';
 import { SafetyPanel, type SafetyTarget } from '../../components/safety';
 import { apiRequest, getSharingClient } from '../../lib/sharing-client';
@@ -12,6 +13,7 @@ type InboxItem = { postId: string; kind: 'photo' | 'video'; senderUsername: stri
 export default function InboxScreen() {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [selected, setSelected] = useState<InboxItem | null>(null);
+  const [commentSafety, setCommentSafety] = useState<string | null>(null);
   const [safety, setSafety] = useState<SafetyTarget | null>(null);
   const [account, setAccount] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
@@ -49,7 +51,7 @@ export default function InboxScreen() {
       const accountId = data.session?.user.id ?? null;
       if (identity.current !== accountId) {
         identity.current = accountId;
-        setSelected(null); setSafety(null); setItems([]);
+        setCommentSafety(null); setSelected(null); setSafety(null); setItems([]);
       }
       setSignedIn(!!accountId);
       if (!accountId) { setItems([]); return; }
@@ -73,7 +75,7 @@ export default function InboxScreen() {
         if (identity.current === accountId) return;
         cancelRequests();
         identity.current = accountId;
-        setSelected(null); setSafety(null); setItems([]); setSignedIn(!!accountId); setBusy(false); setError(null);
+        setCommentSafety(null); setSelected(null); setSafety(null); setItems([]); setSignedIn(!!accountId); setBusy(false); setError(null);
         // Keep authenticated requests outside Supabase's synchronous auth callback.
         void Promise.resolve().then(() => { if (!controller.signal.aborted) void refresh(); });
       });
@@ -86,7 +88,7 @@ export default function InboxScreen() {
       unsubscribe?.();
       subscribeAuth.current = null;
       cancelRequests();
-      setSelected(null); setSafety(null); setItems([]); setBusy(false); setError(null); setAccount(false);
+      setCommentSafety(null); setSelected(null); setSafety(null); setItems([]); setBusy(false); setError(null); setAccount(false);
     };
   }, [cancelRequests, refresh]));
   const accept = async (item: InboxItem) => {
@@ -104,7 +106,7 @@ export default function InboxScreen() {
       if (response.requestState !== 'accepted') throw new Error('Request not accepted');
       const accepted = { ...item, requestState: 'accepted' as const };
       setItems(previous => previous.map(entry => entry.postId === item.postId ? accepted : entry));
-      setSelected(accepted);
+      setCommentSafety(null); setSelected(accepted);
     } catch {
       if (current()) setError('The request could not be accepted. Please try again.');
     } finally {
@@ -115,7 +117,7 @@ export default function InboxScreen() {
   const openSafety = (item: InboxItem) => {
     if (!focused.current || busyAction.current || !identity.current) return;
     // Unmounting ReceivedMoment synchronously ends its reveal and video/audio.
-    setSelected(null); setSafety({ postId: item.postId, username: item.senderUsername, accountId: item.senderAccountId });
+    setCommentSafety(null); setSelected(null); setSafety({ postId: item.postId, username: item.senderUsername, accountId: item.senderAccountId });
   };
   return <Screen>
     <Eyebrow>For your eyes</Eyebrow>
@@ -123,8 +125,9 @@ export default function InboxScreen() {
     {safety && identity.current ? <SafetyPanel key={`${identity.current}:${safety.postId}`} target={safety} accountId={identity.current} onClose={() => setSafety(null)} onBlocked={() => {
       setItems(previous => previous.filter(item => safety.accountId ? item.senderAccountId !== safety.accountId : item.senderUsername !== safety.username)); setSafety(null); void refresh();
     }} /> : selected ? <>
-      <Pressable accessibilityRole="button" style={styles.back} onPress={() => setSelected(null)}><Feather name="arrow-left" size={18} color={colors.text} /><Text style={typography.body}>Back to inbox</Text></Pressable>
-      <ReceivedMoment key={selected.postId} postId={selected.postId} kind={selected.kind} />
+      <Pressable accessibilityRole="button" style={styles.back} onPress={() => { setCommentSafety(null); setSelected(null); }}><Feather name="arrow-left" size={18} color={colors.text} /><Text style={typography.body}>Back to inbox</Text></Pressable>
+      {commentSafety !== selected.postId ? <ReceivedMoment key={selected.postId} postId={selected.postId} kind={selected.kind} /> : null}
+      <MomentComments key={`comments:${selected.postId}`} postId={selected.postId} accountId={identity.current!} onSafetyChange={open => setCommentSafety(open ? selected.postId : null)} />
       <Button secondary label="Report or block" onPress={() => openSafety(selected)} />
     </> : <>
       <Text style={typography.body}>Only moments shared with your account appear here.</Text>
@@ -143,12 +146,13 @@ export default function InboxScreen() {
           <View style={styles.sender}><Text style={typography.section}>{senderLabel(item)}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text></View></View>
         <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
           if (!focused.current || busyAction.current || !identity.current) return;
-          if (item.requestState === 'pending') void accept(item); else setSelected(item);
+          if (item.requestState === 'pending') void accept(item); else { setCommentSafety(null); setSelected(item); }
         }} />
         <Button secondary label={`Report or block ${senderLabel(item)}`} onPress={() => openSafety(item)} />
       </View>)}
       <Button label="Back to camera" icon="camera" onPress={() => router.navigate('/')} />
-      <Text style={styles.footer}>Sharing requests are connected. Text chat is coming later.</Text>
+      {signedIn && identity.current ? <Conversations key={identity.current} accountId={identity.current} /> : null}
+      <Text style={styles.footer}>Moments and conversations have separate acceptance. Viewing time stays with the original moment.</Text>
     </>}
     {error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     <ShareCapture visible={account} capture={null} onClose={() => { setAccount(false); void refresh(); }} />

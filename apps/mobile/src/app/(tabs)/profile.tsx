@@ -5,6 +5,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ShareCapture } from '../../components/share-capture';
 import { AccountPrivacy } from '../../components/account-privacy';
+import { MomentComments } from '../../components/social';
 import { SafetySettings } from '../../components/safety';
 import { Button, colors, Eyebrow, Eyes, Screen, tokens, typography } from '../../components/ui';
 import { apiRequest, getSharingClient, newIdempotencyKey, resolveApiUrl, SharingError } from '../../lib/sharing-client';
@@ -242,6 +243,7 @@ export default function ProfileScreen() {
         </View>)}
         <TextInput accessibilityLabel="Recipient username" editable={!busy} style={styles.input} value={recipient} onChangeText={setRecipient} autoCapitalize="none" autoCorrect={false} placeholder="@username" placeholderTextColor={colors.muted} maxLength={25} />
         {actionButton('Send on Peekalo', () => grantRecipient(selectedMoment))}
+        {identity.current ? <MomentComments key={`comments:${selectedMoment.postId}:${identity.current}`} postId={selectedMoment.postId} accountId={identity.current} owner /> : null}
       </> : <Text style={typography.body}>{selectedMoment.status === 'deleted' ? (selectedMoment.cleanupPending ? 'This moment is deleted and its links and recipient access are revoked. Private storage cleanup is still pending. Retry cleanup without restoring the moment.' : 'This moment is deleted and its links and recipient access are revoked.') : statusLabel(selectedMoment.status) ? `${statusLabel(selectedMoment.status)}. Sharing is unavailable. Refresh to check its status or delete the moment.` : selectedMoment.status === 'failed' ? 'The upload failed. Retry from your retained camera draft, or delete this moment and capture again.' : 'This moment is still being prepared. Refresh to check its status.'}</Text>}
       {selectedMoment.status === 'deleted' ? (selectedMoment.cleanupPending ? actionButton('Retry storage cleanup', () => deleteMoment(selectedMoment)) : null) : confirmDelete === selectedMoment.postId ? <View style={styles.confirm}>
         <Text style={typography.section}>Delete this moment?</Text><Text style={typography.body}>This revokes every link and recipient’s access, removes the moment and frees its active slot. Delivered bytes cannot be erased.</Text>

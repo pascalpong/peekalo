@@ -96,6 +96,8 @@ Meaningful backend/security checks:
 
 ## Milestone 3: minimal social features
 
+REL-06 implements these native social features locally, with generated authorization/lifecycle/recovery evidence recorded on the build board. Unchecked acceptance below retains the hosted rollout, actual operator/contact and signed-device requirements; local source tests do not close those gates. Generic push remains optional.
+
 - [ ] Username lookup, chosen-recipient sharing and chronological “Shared with you” list in Inbox.
 - [ ] Profile with maximum three active hidden media cards. REL-02 implements real own/public inventories using opaque placeholders, owner deletion and link/recipient controls; remaining rollout/device evidence is on the board.
 - [ ] Flat comments; author deletion, post-owner removal, reports and rate limits.

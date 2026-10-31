@@ -51,7 +51,7 @@ test('independent watchdog detects first run, scheduler loss and failed run',asy
     const events=[];const run=create({call:async()=>status,notify:async event=>events.push(event)});
     await assert.rejects(()=>run('monitor'));assert.deepEqual(events,['failure']);
   }
-  const events=[];await create({call:async()=>({lastRunOk:true,lastSuccessSeconds:60,oldestDeletionSeconds:0,writerPending:0,staleUploads:0,cleanupBacklog:0,deniedLastHour:0}),notify:async event=>events.push(event)})('monitor');assert.deepEqual(events,['success']);
+  const events=[];await create({call:async()=>({lastRunOk:true,lastSuccessSeconds:60,oldestDeletionSeconds:0,writerPending:0,staleUploads:0,cleanupBacklog:0,deniedLastHour:0,pendingReview:0,oldestPendingSeconds:0,restrictions:0}),notify:async event=>events.push(event)})('monitor');assert.deepEqual(events,['success']);
 });
 
 test('notifications carry fixed events only, bound timeout and refuse redirects/provider errors',async()=>{
@@ -85,13 +85,23 @@ test('watchdog alerts for stale writers, aged deletions, queue overflow and abno
 
 test('readiness refuses missing operations migrations and releases all upstream bodies',async()=>{
   const healthSource=ts.transpileModule(await readFile(new URL('../apps/web/app/api/health/route.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  for(const missing of [null,'peekalo_operations_status','peekalo_abuse_status']){
+  for(const missing of [null,'peekalo_operations_status','peekalo_abuse_status','peekalo_social_operations']){
     let released=0;const module={exports:{}};
     new Function('require','module','exports','fetch',healthSource)(()=>({configuration:()=>({url:'https://backend.invalid',service:'private-sentinel'})}),module,module.exports,async input=>{
       const path=new URL(input).pathname;
       if(path.endsWith('/peekalo-captures'))return Response.json({public:false,file_size_limit:30*1024*1024});
       return new Response(new globalThis.ReadableStream({cancel(){released++;}}),{status:missing&&path.endsWith(missing)?404:200});
     });
-    const result=await module.exports.GET();assert.equal(result.status,missing?503:200);assert.deepEqual(await result.json(),{ready:!missing});assert.equal(released,3);assert.match(result.headers.get('cache-control'),/no-store/);
+    const result=await module.exports.GET();assert.equal(result.status,missing?503:200);assert.deepEqual(await result.json(),{ready:!missing});assert.equal(released,4);assert.match(result.headers.get('cache-control'),/no-store/);
+  }
+});
+
+test('watchdog validates aggregate social queue age and recovery capacity without text or IDs', async () => {
+  const healthy = {lastRunOk:true,lastSuccessSeconds:60,oldestDeletionSeconds:0,writerPending:0,staleUploads:0,cleanupBacklog:0};
+  for (const patch of [{}, {oldestPendingSeconds:86401}, {restrictions:9001}, {pendingReview:'1'}, {restrictions:-1}]) {
+    const signals = [];
+    const run = create({ call: async name => name === 'peekalo_operations_status' ? healthy : name === 'peekalo_abuse_status' ? {deniedLastHour:0} : {pendingReview:0,oldestPendingSeconds:0,restrictions:0,...patch}, notify: async event => signals.push(event) });
+    if (Object.keys(patch).length) { await assert.rejects(() => run('monitor')); assert.deepEqual(signals,['failure']); }
+    else { await run('monitor'); assert.deepEqual(signals,['success']); }
   }
 });

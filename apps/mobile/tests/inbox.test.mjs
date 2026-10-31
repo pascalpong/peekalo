@@ -65,6 +65,7 @@ function harness(t, { bootstrap, getSession } = {}) {
     '../../components/ui': { Button, colors: {}, typography: {}, Eyebrow: 'Eyebrow', Screen: 'Screen' },
     '../../components/share-capture': { ShareCapture },
     '../../components/received-moment': { ReceivedMoment },
+    '../../components/social': { Conversations: 'Conversations', MomentComments: 'MomentComments' },
     '../../components/safety': { SafetyPanel: 'SafetyPanel' },
     '../../lib/sharing-client': {
       getSharingClient: () => typeof bootstrap === 'function' ? bootstrap(client) : bootstrap ? bootstrap.promise : Promise.resolve(client),
@@ -106,6 +107,7 @@ function harness(t, { bootstrap, getSession } = {}) {
       for (const callback of listeners) callback(accountId ? 'SIGNED_IN' : 'SIGNED_OUT', session);
     },
     safety: () => find(tree, node => node.type === 'SafetyPanel'),
+    comments: () => find(tree, node => node.type === 'MomentComments'),
     selected: () => find(tree, node => node.type === ReceivedMoment)?.props.postId,
     has: label => Boolean(find(tree, node => node.props?.label === label)),
     error: () => find(tree, node => node.props?.accessibilityRole === 'alert')?.props.children,
@@ -337,4 +339,13 @@ test('report target pins the sender account id independently of its displayed us
   const h = harness(t); await h.load([{ ...item('fixture-post', 'accepted'), senderAccountId: 'fixture-original-sender' }]);
   h.press('Report or block @fixture_sender');
   assert.equal(h.safety().props.target.accountId, 'fixture-original-sender');
+});
+
+test('comment safety unmounts the sibling reveal viewer and closing reopens only the current selected moment', async t => {
+  const h = harness(t); await h.load([item('fixture-commented', 'accepted')]); h.press('Open moment');
+  const comments = h.comments(); assert.equal(h.selected(), 'fixture-commented');
+  comments.props.onSafetyChange(true); assert.equal(h.selected(), undefined); assert(h.comments());
+  h.comments().props.onSafetyChange(false); assert.equal(h.selected(), 'fixture-commented');
+  h.comments().props.onSafetyChange(true); h.auth('fixture-account-b'); await flush();
+  assert.equal(h.selected(), undefined); assert.equal(h.comments(), undefined);
 });

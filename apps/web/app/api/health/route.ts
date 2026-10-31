@@ -14,7 +14,7 @@ export async function GET() {
     const replies = await Promise.allSettled([
       fetch(`${c.url}/rest/v1/peekalo_link_requests?select=post_id&limit=0`, { headers, cache: 'no-store', signal }),
       fetch(`${c.url}/storage/v1/bucket/peekalo-captures`, { headers, cache: 'no-store', signal }),
-      ...['peekalo_operations_status', 'peekalo_abuse_status'].map(name => fetch(`${c.url}/rest/v1/rpc/${name}`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}', cache: 'no-store', signal })),
+      ...['peekalo_operations_status', 'peekalo_abuse_status', 'peekalo_social_operations'].map(name => fetch(`${c.url}/rest/v1/rpc/${name}`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}', cache: 'no-store', signal })),
     ]);
     try {
       if (replies.every(reply => reply.status === 'fulfilled' && reply.value.ok)) {

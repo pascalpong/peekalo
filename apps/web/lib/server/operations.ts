@@ -29,6 +29,13 @@ export function createOperations({ call = rpc as Call, accounts = () => createAc
         }
         if (Number(status.oldestDeletionSeconds) > 3600 || Number(status.writerPending) > 0 ||
             Number(status.cleanupBacklog) > 100 || Number(status.staleUploads) > 0) throw new Error('recovery_attention_required');
+        const social = await call<{ pendingReview: number; oldestPendingSeconds: number; restrictions: number }>('peekalo_social_operations', {});
+        // A one-day engineering review-age alarm is a baseline for the selected
+        // operator to validate; it is not a promised moderation response time.
+        for (const field of ['pendingReview', 'oldestPendingSeconds', 'restrictions'] as const) {
+          if (!Number.isSafeInteger(social[field]) || social[field] < 0) throw new Error('invalid_social_operations');
+        }
+        if (social.oldestPendingSeconds > 86400 || social.restrictions > 9000) throw new Error('social_attention_required');
         const abuse = await call<{ deniedLastHour: number }>('peekalo_abuse_status', {});
         if (!Number.isFinite(abuse.deniedLastHour) || abuse.deniedLastHour < 0 || abuse.deniedLastHour >= 100) throw new Error('abuse_attention_required');
       }
