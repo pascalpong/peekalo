@@ -8,6 +8,8 @@
     "./fonts/display.ttf": "./assets/display.ttf",
     "./brand": "./src/brand.ts",
     "./brand/logo.png": "./assets/brand/logo.png",
+    "./brand/logo@3x.png": "./assets/brand/logo@3x.png",
+    "./brand/mark@3x.png": "./assets/brand/mark@3x.png",
     "./brand/mark.png": "./assets/brand/mark.png"
   },
   "types": "./src/index.ts",

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FullscreenReveal } from "./fullscreen-reveal";
-import { Icon } from "./icons";
+import { BrandMark, Icon } from "./icons";
 import { SafetyReport } from "./safety-report";
 import styles from "./protected-viewer.module.css";
 
@@ -243,10 +243,18 @@ export function ProtectedViewer() {
   const disabled = reportOpen || ["loading", "exhausted", "unavailable", "claimed", "expired", "pending", "blocked", "restricted", "error"].includes(state.phase);
   const seconds = state.remainingMs === null ? null : (Math.ceil(state.remainingMs / 100) / 10).toFixed(1);
   const stop = useCallback(() => { controls.current?.stop(); }, []);
+  const unavailable = ["unavailable", "claimed", "expired", "pending", "blocked", "restricted"].includes(state.phase);
+  const prompt = state.phase === "loading" || state.phase === "requesting" ? "Just a moment…"
+    : state.phase === "exhausted" ? "Your viewing time is used up."
+    : state.phase === "pending" ? "Awaiting safety review."
+    : state.phase === "claimed" ? "This link is already claimed."
+    : state.phase === "expired" ? "This link has expired."
+    : unavailable ? "This moment is unavailable."
+    : state.phase === "error" ? "This moment couldn’t load."
+    : "Hold to reveal";
 
   return <section className={styles.viewer} aria-label="Private shared moment">
-    <div className={styles.meta}><span>ONE MOMENT · ONE VIEWER</span><span className={styles.time} aria-label={seconds === null ? "Checking viewing time" : `${seconds} seconds remaining`}>{seconds === null ? "Checking viewing time…" : `${seconds}s left`}</span></div>
-    <button className={styles.surface} type="button" disabled={disabled} aria-label={revealed ? "Moment revealed. Release to hide." : "Hold to reveal this moment"} aria-describedby="protected-instructions" onContextMenu={event => event.preventDefault()}
+    <button className={styles.surface} type="button" disabled={disabled} aria-label={revealed ? "Moment revealed. Release to hide." : "Hold to reveal this moment"} aria-describedby="protected-time protected-instructions" onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         if (!event.isPrimary || event.button !== 0) return;
         event.preventDefault();
@@ -267,7 +275,16 @@ export function ProtectedViewer() {
         if (event.key === " " || event.key === "Enter") event.preventDefault();
         if (input.current === `key:${event.key}`) stop();
       }}>
-      <span className={styles.cover} aria-hidden="true"><span className={styles.eye}><Icon name={state.phase === "exhausted" || ["unavailable", "claimed", "expired", "pending", "blocked", "restricted"].includes(state.phase) ? "lock" : "eye"} /></span><strong>{state.phase === "exhausted" ? "A moment, remembered." : ["unavailable", "claimed", "expired", "pending", "blocked", "restricted"].includes(state.phase) ? state.phase === "pending" ? "Awaiting safety review." : state.phase === "claimed" ? "This link is already claimed." : state.phase === "expired" ? "This link has expired." : "This moment is unavailable." : state.phase === "requesting" ? "Just a moment…" : "Hold to reveal"}</strong><span>Release to hide · Up to 10 seconds total</span></span>
+      <span className={styles.meta} aria-hidden="true"><span>Shared moment</span><span>{unavailable ? "Unavailable" : "Hidden"}</span></span>
+      <span className={styles.cover} aria-hidden="true">
+        <span className={styles.mark}>{unavailable || state.phase === "exhausted" ? <Icon name="lock" /> : <BrandMark />}</span>
+        <strong>{prompt}</strong>
+        {!disabled && state.phase !== "requesting" && <span>Release to hide.</span>}
+      </span>
+      <span className={styles.budget}>
+        <span id="protected-time" className={styles.time} aria-label={seconds === null ? "Checking viewing time" : `${seconds} seconds remaining`}>{seconds === null ? "—" : `${seconds}s left`}</span>
+        <span className={styles.allowance}>Up to 10 seconds total</span>
+      </span>
     </button>
     {state.mediaUrl !== null && <FullscreenReveal seconds={seconds ?? "0.0"} onDismiss={stop} visible={revealed}>
       {state.kind === "photo" && (
@@ -282,7 +299,7 @@ export function ProtectedViewer() {
       {state.kind === "video" && <video ref={video} src={state.mediaUrl!} className={styles.media} autoPlay={false} playsInline preload="auto" controls={false} onLoadedMetadata={event => { if (video.current === event.currentTarget) event.currentTarget.currentTime = videoPosition.current; }} onLoadedData={() => controls.current?.ready(state.mediaTurn!)} onTimeUpdate={event => { if (video.current === event.currentTarget) videoPosition.current = event.currentTarget.currentTime; }} disablePictureInPicture controlsList="nodownload noplaybackrate noremoteplayback" onError={() => controls.current?.failed(state.mediaTurn!)} />}
     </FullscreenReveal>}
     <p className={styles.status} role="status" aria-live="polite">{statusMessage(state.phase)}</p>
-    <p id="protected-instructions" className={styles.help}>Hold the image, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
+    <p id="protected-instructions" className={styles.help}>Hold the card, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
     <button type="button" className={styles.accessible} disabled={disabled} aria-busy={state.phase === "requesting"} onClick={() => controls.current?.start("accessible", true)} onBlur={stop}>Reveal for 1 second<Icon name="eye" /></button>
     <p className={styles.help}>Uses the same total allowance. Interrupted prepaid time is used.</p>
     <SafetyReport link onOpen={() => { reportActive.current = true; controls.current?.stop(); setReportOpen(true); }} onClose={() => { reportActive.current = false; setReportOpen(false); }} />

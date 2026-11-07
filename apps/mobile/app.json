@@ -26,8 +26,8 @@
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#d4fa71"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#151618"
       }
     },
     "plugins": [

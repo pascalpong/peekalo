@@ -2,7 +2,7 @@ import Feather from '@expo/vector-icons/Feather';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Button, colors, Eyebrow, Screen, typography } from '../../components/ui';
+import { Button, colors, Eyebrow, Eyes, Screen, typography } from '../../components/ui';
 import { ShareCapture } from '../../components/share-capture';
 import { Conversations, MomentComments } from '../../components/social';
 import { ReceivedMoment } from '../../components/received-moment';
@@ -120,8 +120,8 @@ export default function InboxScreen() {
     setCommentSafety(null); setSelected(null); setSafety({ postId: item.postId, username: item.senderUsername, accountId: item.senderAccountId });
   };
   return <Screen>
-    <Eyebrow>For your eyes</Eyebrow>
-    <Text accessibilityRole="header" style={[typography.title, styles.title]}>{selected ? `From ${senderLabel(selected)}` : 'Your little\nmoments.'}</Text>
+    <Eyebrow>Inbox</Eyebrow>
+    <Text accessibilityRole="header" style={[typography.title, styles.title]}>{selected ? `From ${senderLabel(selected)}` : 'For your eyes.'}</Text>
     {safety && identity.current ? <SafetyPanel key={`${identity.current}:${safety.postId}`} target={safety} accountId={identity.current} onClose={() => setSafety(null)} onBlocked={() => {
       setItems(previous => previous.filter(item => safety.accountId ? item.senderAccountId !== safety.accountId : item.senderUsername !== safety.username)); setSafety(null); void refresh();
     }} /> : selected ? <>
@@ -141,15 +141,30 @@ export default function InboxScreen() {
         <Text style={typography.section}>Quiet, for now.</Text>
         <Text style={[typography.body, styles.center]}>{signedIn ? 'Ask a friend to share a moment with your username.' : 'Sign in to receive private moments and accept requests.'}</Text>
       </View>}
+      {(busy || items.length > 0) && <Text accessibilityRole="header" style={[typography.section, styles.momentsHeading]}>Moments</Text>}
       {items.map(item => <View key={item.postId} style={styles.item}>
-        <View style={styles.itemMeta}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={21} color={colors.text} />
-          <View style={styles.sender}><Text style={typography.section}>{senderLabel(item)}</Text><Text style={typography.small}>{item.requestState === 'pending' ? 'Wants to share a moment' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text></View></View>
-        <Button secondary label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
-          if (!focused.current || busyAction.current || !identity.current) return;
-          if (item.requestState === 'pending') void accept(item); else { setCommentSafety(null); setSelected(item); }
-        }} />
-        <Button secondary label={`Report or block ${senderLabel(item)}`} onPress={() => openSafety(item)} />
+        <View style={styles.itemMeta}>
+          <View style={styles.avatar}><Feather name={item.kind === 'video' ? 'video' : 'image'} size={19} color={colors.text} /></View>
+          <View style={styles.sender}>
+            <Text style={typography.section}>{senderLabel(item)}</Text>
+            <Text style={typography.small}>{item.requestState === 'pending' ? 'Request to share' : typeof item.remainingMs === 'number' ? item.remainingMs <= 0 ? 'Viewing time used up' : `Hidden · ${(item.remainingMs / 1000).toFixed(1)}s left` : 'Hidden · viewing time checked when opened'}</Text>
+          </View>
+        </View>
+        <View style={styles.itemAction}>
+          <Button compact secondary={item.requestState !== 'pending'} icon="chevron-right" label={item.requestState === 'pending' ? 'Accept request' : 'Open moment'} onPress={() => {
+            if (!focused.current || busyAction.current || !identity.current) return;
+            if (item.requestState === 'pending') void accept(item); else { setCommentSafety(null); setSelected(item); }
+          }} />
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Report or block ${senderLabel(item)}`} onPress={() => openSafety(item)} style={styles.more}>
+          <Feather name="more-horizontal" color={colors.muted} size={22} />
+        </Pressable>
       </View>)}
+      {items.length > 0 && <View style={styles.hiddenCard}>
+        <Eyes large />
+        <Text style={typography.section}>Hidden by default.</Text>
+        <Text style={[typography.small, styles.center]}>Open a moment, then hold to reveal.</Text>
+      </View>}
       <Button label="Back to camera" icon="camera" onPress={() => router.navigate('/')} />
       {signedIn && identity.current ? <Conversations key={identity.current} accountId={identity.current} /> : null}
       <Text style={styles.footer}>Moments and conversations have separate acceptance. Viewing time stays with the original moment.</Text>
@@ -159,9 +174,15 @@ export default function InboxScreen() {
   </Screen>;
 }
 const styles = StyleSheet.create({
-  title: { marginTop: 14, marginBottom: 18, fontSize: 36, lineHeight: 41 }, actions: { marginTop: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16 },
+  title: { marginTop: 7, marginBottom: 12, fontSize: 38, lineHeight: 46 }, actions: { marginTop: 20, marginBottom: 12, flexDirection: 'row', alignItems: 'center', gap: 16 },
   refresh: { minHeight: 48, minWidth: 48, alignItems: 'center', justifyContent: 'center' }, empty: { paddingVertical: 42, paddingHorizontal: 20, alignItems: 'center', gap: 16 },
-  center: { textAlign: 'center' }, item: { paddingVertical: 20, borderBottomWidth: 1, borderColor: colors.border, gap: 16, marginBottom: 16 },
-  itemMeta: { flexDirection: 'row', alignItems: 'center', gap: 14 }, sender: { flex: 1, gap: 4 }, footer: { color: colors.muted, fontSize: 10, textAlign: 'center', lineHeight: 17, marginTop: 20 },
+  center: { textAlign: 'center' },
+  momentsHeading: { paddingVertical: 12, borderBottomWidth: 1, borderColor: colors.border },
+  item: { paddingVertical: 14, borderBottomWidth: 1, borderColor: colors.border, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+  itemAction: { maxWidth: '100%', marginLeft: 'auto' },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border },
+  more: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  hiddenCard: { backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, borderRadius: 20, alignItems: 'center', gap: 8, padding: 20, marginVertical: 20 },
+  itemMeta: { flex: 1, minWidth: 118, flexDirection: 'row', alignItems: 'center', gap: 10 }, sender: { flex: 1, gap: 4 }, footer: { color: colors.muted, fontSize: 10, textAlign: 'center', lineHeight: 17, marginTop: 20 },
   back: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 16, marginBottom: 14 }, error: { color: colors.danger, marginVertical: 16, lineHeight: 21 },
 });

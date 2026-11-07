@@ -60,7 +60,7 @@ export function FullscreenReveal({ children, seconds, onDismiss, visible = true 
     onContextMenu={event => event.preventDefault()}
     onPointerDown={event => { event.preventDefault(); onDismiss(); }}>
     <div className={styles.media}>{children}</div>
-    <div className={styles.top}><BrandLogo className={styles.brand} /><span className={styles.time}>{seconds}s left</span></div>
-    <div className={styles.bottom}><span className={styles.dot} />Release to hide</div>
+    <div className={styles.top}><BrandLogo className={styles.brand} /><span>Revealed</span></div>
+    <div className={styles.bottom}><span className={styles.time}>{seconds}s left</span><span>Release to hide</span></div>
   </div>, document.body);
 }

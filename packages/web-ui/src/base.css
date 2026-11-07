@@ -7,6 +7,8 @@
   --line: var(--pk-color-border);
   --accent: var(--pk-color-accent);
   --display-font: var(--font-peekalo-display), Arial, Helvetica, sans-serif;
+  --frosted-surface: radial-gradient(ellipse at 78% 38%, #ffffff16, transparent 68%),
+    linear-gradient(145deg, #ffffff04, transparent 62%), var(--pk-color-surface);
 }
 * { box-sizing: border-box; }
 html { min-width: 320px; }

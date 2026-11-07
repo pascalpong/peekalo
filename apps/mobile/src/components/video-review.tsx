@@ -31,6 +31,6 @@ export function VideoReview({ uri }: { uri: string }) {
 }
 
 const styles = StyleSheet.create({
-  playback: { position: 'absolute', alignSelf: 'center', top: '46%', width: 58, height: 58, borderRadius: 29, backgroundColor: '#00000066', alignItems: 'center', justifyContent: 'center' },
+  playback: { position: 'absolute', alignSelf: 'center', top: '46%', width: 58, height: 58, borderRadius: 29, backgroundColor: 'rgba(21, 22, 24, 0.85)', borderWidth: 1, borderColor: 'rgba(239, 239, 237, 0.26)', alignItems: 'center', justifyContent: 'center' },
   error: { position: 'absolute', top: '36%', left: 24, right: 24, color: '#fff', textAlign: 'center' },
 });

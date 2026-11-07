@@ -361,7 +361,7 @@ export function ShareCapture({ visible, capture, onClose, onBusyChange }: Props)
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
           {committing && <Text accessibilityRole="alert" style={styles.body}>Finishing your account change. Please keep this screen open for a moment.</Text>}
           <Text style={styles.eyebrow}>{capture ? 'A MOMENT FOR SOMEONE' : 'YOUR PEEKALO ACCOUNT'}</Text>
-          <Text style={styles.title}>{capture ? `Share your ${capture.kind}.` : 'A little closer.'}</Text>
+          <Text style={styles.title}>{capture ? 'Choose who sees.' : 'A little closer.'}</Text>
           <Text style={styles.body}>{capture ? 'Your capture stays private. Choose a Peekalo recipient or create a single-use link.' : 'Sign in to receive and share moments on Peekalo.'}</Text>
           {stage === 'connecting' && <View style={styles.loading}><ActivityIndicator color={colors.text} /><Text style={styles.body}>Connecting to Peekalo… The free test server may take about a minute to wake up. You can close this and try again.</Text></View>}
           {stage === 'unavailable' && <Action label="Try connection again" onPress={connect} disabled={busy} />}
@@ -433,11 +433,11 @@ const styles = StyleSheet.create({
   content: { padding: 24, paddingBottom: 48, width: '100%', maxWidth: 540, alignSelf: 'center', gap: 16 },
   eyebrow: { color: colors.accent, fontSize: 10, letterSpacing: 1.5, fontWeight: '600' }, title: { color: colors.text, fontSize: 39, lineHeight: 43, letterSpacing: -1.8, fontFamily: tokens.font.display },
   body: { color: colors.muted, fontSize: 14, lineHeight: 22, flexShrink: 1 }, heading: { color: colors.text, fontSize: 20, fontFamily: tokens.font.display, letterSpacing: -0.6 },
-  section: { gap: 14, marginTop: 6 }, signedIn: { color: colors.muted, fontSize: 12 }, option: { borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 20, gap: 14 },
-  input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 14, minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, color: colors.text, fontSize: 16 },
+  section: { gap: 14, marginTop: 6 }, signedIn: { color: colors.muted, fontSize: 12 }, option: { borderWidth: 1, borderColor: colors.border, borderRadius: 24, padding: 20, gap: 14, backgroundColor: colors.surface },
+  input: { backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, borderRadius: 14, minHeight: 52, paddingHorizontal: 16, paddingVertical: 12, color: colors.text, fontSize: 16 },
   action: { minHeight: 54, borderRadius: 28, backgroundColor: colors.accent, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
   secondaryText: { color: colors.text },
-  actionText: { color: colors.onAccent, fontSize: 14, fontWeight: '600', flexShrink: 1 }, secondary: { backgroundColor: colors.surface }, dim: { opacity: 0.5 },
+  actionText: { color: colors.onAccent, fontSize: 14, fontWeight: '600', flexShrink: 1 }, secondary: { backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border }, dim: { opacity: 0.5 },
   google: { minHeight: 54, borderRadius: 28, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 22, paddingVertical: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
   divider: { color: colors.muted, fontSize: 12, textAlign: 'center' },
   loading: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10 }, textButton: { paddingVertical: 10 }, textButtonLabel: { textAlign: 'center', color: colors.text, fontSize: 13 },

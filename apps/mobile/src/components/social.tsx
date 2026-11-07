@@ -155,7 +155,7 @@ function ConversationDetail({ accountId, conversation, authorized, onChanged }: 
     <Text accessibilityRole="header" style={typography.section}>{peerLabel(conversation.peerUsername)}</Text>
     {conversation.requestState === 'pending' && conversation.incoming ? <View style={styles.row}><Action label="Accept conversation" disabled={state.busy} onPress={() => { void respond(true); }} /><Action label="Decline conversation" disabled={state.busy} onPress={() => { void respond(false); }} /></View> : null}
     {viewing && state.data ? <><Action label="Close moment" onPress={() => setViewing(null)} /><ReceivedMoment key={viewing.postId} {...viewing} /></> : null}
-    {state.data?.items.map(message => <View key={message.messageId} style={styles.card}>
+    {state.data?.items.map(message => <View key={message.messageId} style={[styles.card, styles.message, message.authorAccountId === accountId ? styles.outgoing : styles.incoming]}>
       <Text style={typography.small}>{message.authorAccountId === accountId ? 'You' : peerLabel(conversation.peerUsername)} · {message.status === 'moderation_pending' ? 'Waiting for safety review' : message.status === 'rejected' ? 'Not approved' : message.status === 'removed' ? 'Removed' : 'Approved'}</Text>
       {message.kind === 'moment' ? <><Text style={typography.section}>Hidden moment</Text><Text style={typography.small}>This references the original moment. Only its owner can grant access. Acceptance and remaining viewing time are checked when opened.</Text>{message.postId && message.authorAccountId !== accountId ? <Action label="Open referenced moment" disabled={state.busy} onPress={() => { void open(message); }} /> : null}{!message.postId ? <Text style={typography.small}>This moment reference is unavailable. Check Shared with you for any owner-created access request.</Text> : null}</> : message.body ? <Text selectable style={styles.body}>{message.body}</Text> : null}
       {message.authorAccountId === accountId && message.status !== 'removed' ? <Action label="Delete message" disabled={state.busy} onPress={() => { void state.mutate(signal => apiRequest(`/api/social/messages/${message.messageId}`, { method: 'DELETE', signal, expectedAccountId: accountId })); }} /> : null}
@@ -198,7 +198,7 @@ export function MomentComments({ postId, accountId, owner = false, onSafetyChang
   return <View style={styles.section}>
     <Text accessibilityRole="header" style={typography.section}>Comments</Text>
     <Text style={typography.small}>Only the owner and accepted app recipients can join. Discussion can remain after viewing time is used, while audience access remains valid. Text is readable without holding.</Text>
-    {state.data?.items.map(comment => <View key={comment.commentId} style={styles.card}>
+    {state.data?.items.map(comment => <View key={comment.commentId} style={styles.comment}>
       <Text style={typography.small}>{comment.authorAccountId === accountId ? 'You' : peerLabel(comment.authorUsername)} · {comment.status === 'moderation_pending' ? 'Waiting for safety review' : comment.status === 'rejected' ? 'Not approved' : comment.status === 'removed' ? 'Removed' : 'Approved'}</Text>
       {comment.body ? <Text selectable style={styles.body}>{comment.body}</Text> : null}
       {(comment.authorAccountId === accountId || owner || comment.canRemove) && comment.status !== 'removed' ? <Action label={comment.authorAccountId === accountId ? 'Delete your comment' : 'Remove comment from your moment'} disabled={state.busy} onPress={() => { void state.mutate(signal => apiRequest(`/api/social/comments/${comment.commentId}`, { method: 'DELETE', signal, expectedAccountId: accountId })); }} /> : null}
@@ -252,6 +252,10 @@ const styles = StyleSheet.create({
   section: { marginVertical: tokens.space.lg, gap: tokens.space.md, borderTopWidth: 1, borderColor: colors.border, paddingTop: tokens.space.lg },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: tokens.space.sm },
   card: { borderWidth: 1, borderColor: colors.border, borderRadius: tokens.radius.md, padding: tokens.space.md, backgroundColor: colors.surface, gap: tokens.space.sm },
+  message: { width: '91%' },
+  incoming: { alignSelf: 'flex-start', borderBottomLeftRadius: tokens.radius.sm },
+  outgoing: { alignSelf: 'flex-end', borderBottomRightRadius: tokens.radius.sm, backgroundColor: colors.elevated },
+  comment: { paddingVertical: tokens.space.md, borderBottomWidth: 1, borderColor: colors.border, gap: tokens.space.sm },
   input: { backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, borderRadius: tokens.radius.sm, color: colors.text, padding: tokens.space.md, minHeight: 50, textAlignVertical: 'top' },
   action: { minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: tokens.radius.pill, paddingHorizontal: tokens.space.md, paddingVertical: 13, justifyContent: 'center', backgroundColor: colors.surface },
   actionText: { color: colors.text, fontSize: tokens.type.body }, body: { color: colors.text, fontSize: tokens.type.body, lineHeight: 23 },

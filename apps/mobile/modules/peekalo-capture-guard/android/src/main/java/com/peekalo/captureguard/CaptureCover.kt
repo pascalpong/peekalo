@@ -52,7 +52,7 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
     tag = COVER_TAG
     // Emergency native adapter to @peekalo/design semantic values: this cover
     // must be available before JavaScript/fonts or React content can initialize.
-    setBackgroundColor(Color.rgb(8, 10, 9)) // background #080a09
+    setBackgroundColor(Color.rgb(21, 22, 24)) // background #151618
     alpha = 1f
     elevation = 100_000f
     isClickable = true
@@ -67,7 +67,7 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
       setPadding(padding, padding, padding, padding)
     }
     message.apply {
-      setTextColor(Color.rgb(241, 242, 237)) // text #f1f2ed
+      setTextColor(Color.rgb(239, 239, 237)) // text #efefed
       textSize = 18f // type.section
       gravity = Gravity.CENTER
       importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -75,8 +75,8 @@ internal class CaptureCover private constructor(activity: Activity) : FrameLayou
     retry.apply {
       text = "Try again"
       isAllCaps = false
-      backgroundTintList = ColorStateList.valueOf(Color.rgb(212, 250, 113)) // accent #d4fa71
-      setTextColor(Color.rgb(19, 26, 13)) // onAccent #131a0d
+      backgroundTintList = ColorStateList.valueOf(Color.rgb(239, 239, 237)) // accent #efefed
+      setTextColor(Color.rgb(21, 22, 24)) // onAccent #151618
       setOnClickListener { onRetry?.invoke() }
     }
     column.addView(message, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))

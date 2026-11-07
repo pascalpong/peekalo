@@ -4,7 +4,8 @@ import { REVEAL_BUDGET_MS } from '@peekalo/contracts';
 import { createLocalRevealSession } from '@peekalo/reveal';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FullscreenReveal } from './fullscreen-reveal';
-import { Icon } from './icons';
+import { BrandMark, Icon } from './icons';
+import styles from './protected-viewer.module.css';
 
 // This sample has no identity or storage. Route changes retain its allowance;
 // a full page reload creates a new demo, not another real-link entitlement.
@@ -48,11 +49,10 @@ export function SampleReveal() {
   }, []);
 
   const start = (duration?: number) => !failed && session.start(duration);
-  return <div className="sample-viewer">
-    <div className="sample-meta"><span>LOCAL DEMO · ILLUSTRATION</span><span className="sample-countdown" aria-label={`${seconds} seconds remaining`}>{seconds}s left</span></div>
-    <button type="button" className="reveal-surface" disabled={exhausted || failed}
+  return <div className={styles.viewer}>
+    <button type="button" className={styles.surface} disabled={exhausted || failed}
       aria-label={revealed ? 'Sample revealed: a coffee cup, orange and a potted plant' : failed ? 'Sample unavailable' : exhausted ? 'Viewing time used up' : 'Hold to reveal sample'}
-      aria-describedby="reveal-instructions" onContextMenu={event => event.preventDefault()}
+      aria-describedby="sample-time reveal-instructions" onContextMenu={event => event.preventDefault()}
       onPointerDown={event => {
         if (input.current !== null) { stop(); return; }
         if (!event.isPrimary || event.button !== 0) return;
@@ -77,14 +77,15 @@ export function SampleReveal() {
         if (event.key === ' ' || event.key === 'Enter') event.preventDefault();
         if (input.current === `key:${event.key}`) stop();
       }}>
-      {/* A physically blurred asset is independent of the clear fixture. Only
-          this identified public demo is addressable from /public. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/demo/morning-hidden.png" alt="" draggable={false} className="sample-image" />
-      <span className="sample-cover" aria-hidden="true">
-        <span className="peek-circle"><Icon name={exhausted ? 'lock' : 'eye'} /></span>
-        <span className="sample-prompt">{failed ? 'Sample unavailable' : exhausted ? 'A moment, remembered.' : 'Hold to reveal'}</span>
-        <span className="sample-hint">{failed ? 'Refresh to try again.' : exhausted ? 'Your viewing time is used up.' : 'Release to hide · Up to 10 seconds total'}</span>
+      <span className={styles.meta} aria-hidden="true"><span>Sample illustration</span><span>Hidden</span></span>
+      <span className={styles.cover} aria-hidden="true">
+        <span className={styles.mark}>{exhausted ? <Icon name="lock" /> : <BrandMark />}</span>
+        <strong>{failed ? 'Sample unavailable' : exhausted ? 'Your viewing time is used up.' : 'Hold to reveal'}</strong>
+        <span>{failed ? 'Refresh to try again.' : exhausted ? 'Refresh to reset the demo.' : 'Release to hide.'}</span>
+      </span>
+      <span className={styles.budget}>
+        <span id="sample-time" className={styles.time} aria-label={`${seconds} seconds remaining`}>{seconds}s left</span>
+        <span className={styles.allowance}>Up to {REVEAL_BUDGET_MS / 1000} seconds total</span>
       </span>
     </button>
     {revealed && <FullscreenReveal seconds={seconds} onDismiss={stop}>
@@ -92,9 +93,9 @@ export function SampleReveal() {
       <img src="/demo/morning-clear.png" alt="" draggable={false}
         onError={() => { stop(); setFailed(true); }} />
     </FullscreenReveal>}
-    <p className="sample-status" role="status">{revealed ? 'Revealed · release to hide' : failed ? 'Sample couldn’t load.' : exhausted ? 'Your viewing time is used up.' : 'Hidden · ready when you are'}</p>
-    <p id="reveal-instructions" className="sample-help">Hold the image, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
-    <button type="button" className="sample-accessible" disabled={exhausted || failed} onClick={() => start(1_000)} onBlur={stop}>Reveal for 1 second<Icon name="eye" /></button>
-    <p className="sample-help">This button uses the same allowance. Refreshing resets this local demo.</p>
+    <p className={styles.status} role="status">{revealed ? 'Revealed · release to hide' : failed ? 'Sample couldn’t load.' : exhausted ? 'Your viewing time is used up.' : 'Hidden · ready when you are'}</p>
+    <p id="reveal-instructions" className={styles.help}>Hold the card, Space or Enter to view full screen. Release, move outside the card or press Escape to hide.</p>
+    <button type="button" className={styles.accessible} disabled={exhausted || failed} onClick={() => start(1_000)} onBlur={stop}>Reveal for 1 second<Icon name="eye" /></button>
+    <p className={styles.help}>This button uses the same allowance. Refreshing resets this local demo.</p>
   </div>;
 }

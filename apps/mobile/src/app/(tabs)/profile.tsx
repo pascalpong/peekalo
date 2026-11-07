@@ -210,7 +210,8 @@ export default function ProfileScreen() {
     accessibilityState={{ disabled: busy }} onPress={onPress} style={[styles.control, danger && styles.dangerControl, busy && styles.disabled]}><Text style={[styles.controlText, danger && styles.dangerText]}>{label}</Text></Pressable>;
 
   return <Screen>
-    <Eyebrow>Your little corner</Eyebrow>
+    <Eyebrow>Profile</Eyebrow>
+    <Text accessibilityRole="header" style={typography.title}>Your little corner.</Text>
     <View style={styles.identity}>
       <View style={styles.avatar}>{username ? <Text style={styles.initial}>{username[0].toUpperCase()}</Text> : <Eyes large />}</View>
       <View style={styles.nameBlock}><Text accessibilityRole="header" style={styles.name} numberOfLines={1} adjustsFontSizeToFit>{title}</Text><Text style={typography.small} numberOfLines={2}>{subtitle}</Text></View>
@@ -223,7 +224,12 @@ export default function ProfileScreen() {
     </View>
     <View style={styles.sectionHeader}><Text style={typography.section}>Your moments</Text><View style={styles.hiddenLabel}><Feather name="eye-off" size={13} color={colors.muted} /><Text style={styles.hiddenText}>Hidden by default</Text></View></View>
     {busy && <ActivityIndicator color={colors.text} accessibilityLabel="Updating your moments" />}
-    {moments && <Text style={styles.allowance}>{moments.activeCount} of {moments.limit} active · {moments.availableSlots} {moments.availableSlots === 1 ? 'slot' : 'slots'} available</Text>}
+    {moments && <View style={styles.allowanceGroup}>
+      <Text style={styles.allowance}>{moments.activeCount} of {moments.limit} active · {moments.availableSlots} {moments.availableSlots === 1 ? 'slot' : 'slots'} available</Text>
+      <View style={styles.slotMeter} importantForAccessibility="no-hide-descendants">
+        {Array.from({ length: moments.limit }, (_, index) => <View key={index} style={[styles.slot, index < moments.activeCount && styles.slotFilled]} />)}
+      </View>
+    </View>}
     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     {notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{notice}</Text> : null}
     {selectedMoment ? <View style={styles.detail}>
@@ -268,12 +274,16 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 24 }, avatar: { width: 85, height: 85, borderRadius: 44, backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
-  initial: { fontSize: 38, fontFamily: tokens.font.display, color: colors.accent }, nameBlock: { flex: 1, gap: 5 }, name: { fontSize: tokens.type.title, letterSpacing: -1.4, fontFamily: tokens.font.display, color: colors.text },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 24 }, avatar: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
+  initial: { fontSize: 25, fontFamily: tokens.font.display, color: colors.accent }, nameBlock: { flex: 1, gap: 5 }, name: { fontSize: 22, letterSpacing: -0.7, fontFamily: tokens.font.display, color: colors.text },
   actions: { marginTop: 22, marginBottom: 30, flexDirection: 'row', alignItems: 'center', gap: 12 }, refresh: { minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'center' },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 17 }, hiddenLabel: { flexDirection: 'row', alignItems: 'center', gap: 5 }, hiddenText: { color: colors.muted, fontSize: 10 },
-  allowance: { color: colors.text, fontSize: 13, marginBottom: 18 }, empty: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 20, marginBottom: 20 }, center: { textAlign: 'center' },
-  error: { color: colors.danger, lineHeight: 21, marginVertical: 14 }, notice: { color: colors.text, lineHeight: 21, marginVertical: 14 }, detail: { gap: 16 }, placeholder: { backgroundColor: colors.elevated, padding: 28, borderRadius: tokens.radius.md, gap: 14, alignItems: 'center' },
+  allowanceGroup: { gap: 10, marginBottom: 18 },
+  allowance: { color: colors.text, fontSize: 13 },
+  slotMeter: { flexDirection: 'row', gap: 6 },
+  slot: { height: 3, flex: 1, borderRadius: 2, backgroundColor: colors.border },
+  slotFilled: { backgroundColor: colors.accent }, empty: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 20, marginBottom: 20 }, center: { textAlign: 'center' },
+  error: { color: colors.danger, lineHeight: 21, marginVertical: 14 }, notice: { color: colors.text, lineHeight: 21, marginVertical: 14 }, detail: { gap: 16 }, placeholder: { backgroundColor: colors.elevated, borderWidth: 1, borderColor: colors.border, padding: 28, borderRadius: tokens.radius.md, gap: 14, alignItems: 'center' },
   control: { minHeight: 48, padding: 15, borderRadius: tokens.radius.pill, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, alignItems: 'center' }, controlText: { color: colors.text, fontSize: 14, fontWeight: '600' }, dangerControl: { borderColor: colors.danger, backgroundColor: colors.dangerSurface }, dangerText: { color: colors.danger }, disabled: { opacity: 0.55 },
   person: { gap: 9, borderBottomWidth: 1, borderColor: colors.border, paddingBottom: 14 }, input: { minHeight: 50, borderRadius: tokens.radius.sm, backgroundColor: colors.elevated, color: colors.text, paddingHorizontal: 16, fontSize: 15 }, confirm: { padding: 18, borderWidth: 1, borderColor: colors.danger, borderRadius: tokens.radius.md, gap: 14 },
   moment: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 17, borderBottomWidth: 1, borderColor: colors.border, marginBottom: 12 }, tile: { width: 60, height: 86, borderRadius: tokens.radius.sm, backgroundColor: colors.elevated, justifyContent: 'center', alignItems: 'center' }, momentCopy: { flex: 1, gap: 5 }, limits: { borderTopWidth: 1, borderColor: colors.border, marginTop: 26, paddingVertical: 22 },

@@ -1,7 +1,7 @@
 import { brandArtwork } from '@peekalo/design/brand';
 import { Image } from 'react-native';
 
-// The same outlined artwork is used on web. Metro selects the bundled density.
+// The same Veil artwork is used on web. Metro selects the bundled density.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const logo = require('@peekalo/design/brand/logo.png');
 // eslint-disable-next-line @typescript-eslint/no-require-imports

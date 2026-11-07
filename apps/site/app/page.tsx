@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
 import { Icon } from '@peekalo/web-ui/icons';
 import { BrandLogo } from '@peekalo/web-ui/brand';
@@ -8,63 +9,130 @@ import { HeroVideo } from '../components/hero-video';
 import { getPublicConfig } from '../lib/public-config';
 import styles from './marketing.module.css';
 
-// Keep the form's runtime gate aligned with the API when an operator opens or
-// pauses collection; never freeze an enabled form into static build output.
+// Keep the form's runtime gate aligned with the API when collection changes.
 export const dynamic = 'force-dynamic';
 
+const title = 'Some things are just for you.';
+const description = 'Capture a moment in Peekalo. Choose who sees it, then hold to reveal for up to ten seconds total.';
+
 export const metadata: Metadata = {
-  title: 'Peekalo — A little moment. Just for you.',
-  description: 'A camera-first way to share the little things. Capture a photo or short video, send it to someone, and hold to reveal. Join Peekalo early access.',
-  openGraph: { title: 'Peekalo — A little moment. Just for you.', description: 'The little things feel bigger when they’re just for you. Join early access.', type: 'website' },
+  title,
+  description,
+  openGraph: { title: `Peekalo · ${title}`, description, type: 'website' },
   robots: { index: false, follow: false },
 };
 
 export default function HomePage() {
   const { waitlistEnabled, appOrigin } = getPublicConfig();
+
   return <div className={styles.site}>
     <header className={styles.header}>
       <Link href="/" className={styles.brand} aria-label="Peekalo home"><BrandLogo /></Link>
       <nav aria-label="Main navigation" className={styles.nav}>
         <a href="#how-it-works" className={styles.navText}>How it works</a>
-        <a href="#questions" className={styles.navText}>A few questions</a>
-        <a href="#early-access" className={styles.navText}>Get early access</a>
-        {appOrigin && <a href={appOrigin} className={styles.navCta}>Open web app <Icon name="arrow" /></a>}
+        {appOrigin && <a href={appOrigin} className={styles.navText}>Open web app</a>}
+        <a href="#early-access" className={styles.navCta}>Get Peekalo</a>
       </nav>
     </header>
+
     <main id="main">
       <section className={styles.hero} aria-labelledby="hero-title">
         <div className={styles.heroCopy}>
-          <p className={styles.eyebrow}><span className={styles.statusDot} /> SOME THINGS ARE BETTER LEFT BETWEEN US</p>
-          <h1 id="hero-title">A little<br />mystery.<br /><span className={styles.you}>Just for you.</span></h1>
-          <p className={styles.heroDescription}>Real moments. Chosen people.<br />Hidden until they hold to reveal.</p>
-          <div className={styles.heroActions}><a className={styles.primary} href="#early-access">Get early access <Icon name="arrow" /></a><a className={styles.demoLink} href="#try-a-peek"><span className={styles.play}>↗</span> Take a peek</a></div>
+          <p className={styles.eyebrow}>Moments, meant for fewer.</p>
+          <h1 id="hero-title">Some things<br />are just for you.</h1>
+          <p className={styles.heroDescription}>
+            Capture a moment. Choose who sees it.<br />Hold to reveal.
+          </p>
+          <a className={styles.primary} href="#try-a-peek">Explore Peekalo <Icon name="arrow" /></a>
+          <p className={styles.betaNote}>Invited beta · 18+</p>
         </div>
-        <HeroVideo src="/marketing/a-little-mystery.mp4" poster="/marketing/a-little-mystery-poster.webp" />
-        <div className={styles.heroShade} aria-hidden="true" />
-        <div className={styles.heroBottom}><p><span className={styles.statusDot} /> IN THE MAKING FOR iOS & ANDROID</p><a href="#how-it-works">SCROLL TO DISCOVER <span>↓</span></a><span className={styles.heroFilmLabel}>A LITTLE GLIMPSE / 001</span></div>
+        <Image className={styles.heroArt} src="/marketing/veil-glass.webp" alt=""
+          width={1254} height={1254} unoptimized loading="eager" fetchPriority="high" />
       </section>
-      <div className={styles.manifestoStrip}><span>Less performing.</span><Icon name="spark" /><span>More “you had to be there.”</span><Icon name="spark" /><span>That’s Peekalo.</span></div>
-      <section className={styles.demoSection} id="try-a-peek" aria-labelledby="demo-title">
-        <div className={styles.demoCopy}><p className={styles.eyebrow}>CURIOSITY LOOKS GOOD ON YOU</p><h2 id="demo-title">Some moments<br />are worth<br /><span>holding onto.</span></h2><p>A glance from your day. A little inside joke.<br />Something that only makes sense to them.</p><p>Hold to reveal. Let go to hide.<br />Up to ten seconds total. A little closer.</p><span className={styles.demoHint}><Icon name="eye" /> Go on. Try a little peek.</span></div>
-        <div className={styles.demoVisual}><div className={styles.demoHalo} aria-hidden="true" /><MarketingDemo /><span className={styles.visualCaption}>ILLUSTRATIVE SAMPLE · LOCAL DEMO</span></div>
-      </section>
+      <div className={styles.manifestoStrip}>
+        <span>Made in the moment.</span>
+        <nav aria-label="How Peekalo works">
+          <a href="#capture">Capture</a>
+          <a href="#share">Share</a>
+          <a href="#try-a-peek">Reveal</a>
+        </nav>
+      </div>
+
       <section className={styles.how} id="how-it-works" aria-labelledby="how-title">
-        <div className={styles.sectionHeading}><p className={styles.eyebrow}>THE RITUAL</p><h2 id="how-title">Catch it. Send it.<br /><span>Keep them curious.</span></h2><p>No perfect shot needed. Just something<br />that made you think of someone.</p></div>
-        <div className={styles.steps}>
-          <article className={styles.step}><div className={styles.stepGraphic}><span className={styles.viewfinder}><span>✳</span><i /></span><span className={styles.stepNumber}>01</span></div><h3>Catch a little moment.</h3><p>Open the camera. Tap for a photo or hold for a video up to ten seconds. Fresh from your day.</p></article>
-          <article className={styles.step}><div className={`${styles.stepGraphic} ${styles.sendGraphic}`}><span className={styles.miniMessage}><Icon name="eye" /> a little something for you <span>↗</span></span><span className={styles.stepNumber}>02</span></div><h3>Pick your person.</h3><p>Choose who gets a peek in the app, or send a single-use link that one viewer can claim.</p></article>
-          <article className={styles.step}><div className={`${styles.stepGraphic} ${styles.holdGraphic}`}><span className={styles.holdIllustration}><Icon name="eye" /><span>Hold to reveal</span><i>10s</i></span><span className={styles.stepNumber}>03</span></div><h3>Hold. Peek. Smile.</h3><p>Hold to reveal. Release to hide. Up to ten seconds total, even across a few little peeks.</p></article>
+        <div className={styles.sectionHeading}>
+          <p className={styles.eyebrow}>A quieter way to share</p>
+          <h2 id="how-title">A little moment.<br />A little closer.</h2>
+          <p>For the things you want to share with a few people.</p>
+        </div>
+        <ol className={styles.steps}>
+          <li id="capture">
+            <span aria-hidden="true">01</span>
+            <h3>Capture it here.</h3>
+            <p>Tap for a photo. Hold for a video up to ten seconds. Every moment starts in the app camera.</p>
+          </li>
+          <li id="share">
+            <span aria-hidden="true">02</span>
+            <h3>Choose who sees.</h3>
+            <p>Send to chosen accounts on Peekalo, or create a single-use link that one viewer can claim.</p>
+          </li>
+          <li>
+            <span aria-hidden="true">03</span>
+            <h3>Hold for a glimpse.</h3>
+            <p>Hidden by default. Hold to reveal, release to hide. Up to ten seconds total across holds.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section className={styles.demoSection} id="try-a-peek" aria-labelledby="demo-title">
+        <div className={styles.demoCopy}>
+          <p className={styles.eyebrow}>Try a sample moment</p>
+          <h2 id="demo-title">For your eyes.</h2>
+          <p>Hold to reveal. Release to hide. Each hold uses some of the same ten seconds.</p>
+          <p className={styles.demoHint}><Icon name="clock" /> Local demo with a generated image</p>
+        </div>
+        <MarketingDemo />
+      </section>
+
+      <section className={styles.faq} id="questions" aria-labelledby="faq-title">
+        <div>
+          <p className={styles.eyebrow}>A little more to know</p>
+          <h2 id="faq-title">Good questions.</h2>
+        </div>
+        <div className={styles.questions}>
+          <details><summary>What makes a Peekalo moment different?<span aria-hidden="true">+</span></summary><p>It starts with the in-app camera, stays hidden until the recipient holds to reveal, and has up to ten seconds of viewing time in total.</p></details>
+          <details><summary>Does the other person need the app?<span aria-hidden="true">+</span></summary><p>For a single-use web link, no account or app is needed. The first viewer who deliberately reveals claims the link. Opening the preview does not claim it. Direct sharing in the app is for chosen accounts.</p></details>
+          <details><summary>Can someone save what I share?<span aria-hidden="true">+</span></summary><p>Someone may capture or save revealed content, especially in a browser. Viewing limits and hiding on release cannot erase a copy someone has already received. Share with people you trust.</p></details>
+          <details><summary>When can I try it?<span aria-hidden="true">+</span></summary><p>Peekalo is preparing an invited beta for adults in Thailand and Taiwan on iOS and Android. We haven’t announced a launch date yet.</p></details>
         </div>
       </section>
-      <section className={styles.feeling} aria-labelledby="feeling-title"><span className={styles.feelingStar} aria-hidden="true">✳</span><p className={styles.eyebrow}>FOR THE “THIS MADE ME THINK OF YOU” MOMENTS</p><h2 id="feeling-title">Not every moment<br />needs <em>an audience.</em></h2><p>Some just need your favourite person.</p><a href="#early-access">Find your little corner <Icon name="arrow" /></a></section>
-      <section className={styles.faq} id="questions" aria-labelledby="faq-title"><div><p className={styles.eyebrow}>A LITTLE MORE TO KNOW</p><h2 id="faq-title">Good questions.</h2></div><div className={styles.questions}>
-        <details><summary>What makes a Peekalo moment different?<span>+</span></summary><p>It starts with the in-app camera, stays hidden until the recipient holds to reveal, and has up to ten seconds of viewing time in total. It’s a small way to share something from right now.</p></details>
-        <details><summary>Does the other person need the app?<span>+</span></summary><p>For a single-use web link, no account or app is needed. Only the first viewer who deliberately reveals can claim that link. Direct sharing in the app is for chosen accounts.</p></details>
-        <details><summary>Can someone save what I share?<span>+</span></summary><p>Someone may capture or save revealed content, especially in a browser. Viewing limits and hiding on release cannot erase a copy someone has already received. Share with people you trust.</p></details>
-        <details><summary>When can I try it?<span>+</span></summary><p>Peekalo is being built for iOS and Android. Join early access for availability updates. We haven’t announced a launch date yet.</p></details>
-      </div></section>
-      <section className={styles.waitlist} id="early-access" aria-labelledby="waitlist-title"><span className={styles.waitlistDoodle} aria-hidden="true">♡</span><p className={styles.eyebrow}><span className={styles.statusDot} /> A LITTLE SOMETHING IS COMING</p><h2 id="waitlist-title">Be in on<br />the little things.</h2><p>{waitlistEnabled ? 'Leave your email. We’ll let you know when it’s time to peek.' : 'Your people. Your little moments. Early access is on its way.'}</p><WaitlistForm enabled={waitlistEnabled} /><span className={styles.platforms}>MADE FOR iOS & ANDROID · COMING SOON</span></section>
+
+      <details className={styles.film}>
+        <summary>Watch the brand film</summary>
+        <div className={styles.filmFrame}>
+          <HeroVideo src="/marketing/a-little-mystery.mp4" poster="/marketing/a-little-mystery-poster.webp" />
+        </div>
+      </details>
+
+      <section className={styles.waitlist} id="early-access" aria-labelledby="waitlist-title">
+        <p className={styles.eyebrow}>Invited beta · 18+</p>
+        <h2 id="waitlist-title">A little closer, soon.</h2>
+        <p>{waitlistEnabled ? 'Leave your email for early-access updates.' : 'Peekalo is being prepared for an invited beta.'}</p>
+        <WaitlistForm enabled={waitlistEnabled} />
+        <p className={styles.platforms}>Made for iOS and Android</p>
+      </section>
     </main>
-    <footer className={styles.footer}><Link href="/" className={styles.brand} aria-label="Peekalo home"><BrandLogo /></Link><p>A little glimpse. A little closer.</p><div>{appOrigin && <a href={appOrigin}>Open web app ↗</a>}<Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/support">Support</Link><Link href="/delete-account">Delete account</Link><span>© 2026 Peekalo</span></div></footer>
+
+    <footer className={styles.footer}>
+      <Link href="/" className={styles.brand} aria-label="Peekalo home"><BrandLogo /></Link>
+      <p>A quieter way to share.</p>
+      <nav aria-label="Footer">
+        {appOrigin && <a href={appOrigin}>Open web app</a>}
+        <Link href="/privacy">Privacy</Link>
+        <Link href="/terms">Terms</Link>
+        <Link href="/support">Support</Link>
+        <Link href="/delete-account">Delete account</Link>
+        <span>© 2026 Peekalo</span>
+      </nav>
+    </footer>
   </div>;
 }

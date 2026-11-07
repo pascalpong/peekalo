@@ -1,14 +1,14 @@
 /** Peekalo's platform-neutral visual values. Native and web own their layout adapters. */
 export const tokens = {
   color: {
-    background: '#080a09',
-    surface: '#121613',
-    elevated: '#1b211c',
-    text: '#f1f2ed',
-    muted: '#a7b0a5',
-    border: '#343d35',
-    accent: '#d4fa71',
-    onAccent: '#131a0d',
+    background: '#151618',
+    surface: '#202123',
+    elevated: '#292a2c',
+    text: '#efefed',
+    muted: '#adaeb2',
+    border: '#414246',
+    accent: '#efefed',
+    onAccent: '#151618',
     danger: '#ffaaa0',
     dangerSurface: '#341b1b',
     white: '#ffffff',

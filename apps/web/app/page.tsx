@@ -12,7 +12,7 @@ export default function HomePage() {
   return <Shell>
     <main id="main" className="product-home">
       <section className="product-intro" aria-labelledby="product-title">
-        <p className="eyebrow"><span className="tiny-star">✳</span> PEEKALO WEB</p>
+        <p className="eyebrow">PEEKALO WEB</p>
         <h1 id="product-title">A moment<br />shared with you<span>.</span></h1>
         <p>Have a Peekalo link? Open it directly from your sender’s message to view their moment here.</p>
         <p className="product-hint"><Icon name="eye" />Hidden by default. Hold to reveal.</p>

@@ -368,7 +368,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
     };
   }, [kind, mediaFailed, mediaSource]);
   return <View style={styles.section}>
-    <Text style={styles.budget}>{remaining === null ? 'Viewing time not checked' : `${(Math.ceil(remaining / 100) / 10).toFixed(1)}s left`}</Text>
+    <View style={styles.viewerHeader}><Text style={styles.viewerLabel}>UP TO 10 SECONDS TOTAL</Text><Text style={styles.budget}>{remaining === null ? 'Viewing time not checked' : `${(Math.ceil(remaining / 100) / 10).toFixed(1)}s left`}</Text></View>
     <View style={styles.card} accessible accessibilityRole="button" accessibilityLabel="Hold to reveal this moment"
       accessibilityHint="Release to hide. Ten seconds total across all holds."
       onLayout={e => { bounds.current = e.nativeEvent.layout; }}
@@ -386,7 +386,9 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
             style={StyleSheet.absoluteFill} resizeMode="contain" onLoad={() => mediaReadyChanged(true)} onError={mediaFailed} /> : null
             : <ReceivedVideo source={mediaSource} reveal={reveal} canPlay={canPlay} onReady={mediaReadyChanged} onError={mediaFailed} position={videoPosition} pausePlayback={pausePlayback} />}
         </View> : null}
-        {!reveal || !mediaReady ? <View style={styles.cover}><Feather name="eye-off" size={32} color="#fff" /><Text style={styles.prompt}>{busy ? 'Opening…' : remaining === null ? 'Checking viewing time' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text></View> : null}
+        {!reveal || !mediaReady ? <View style={styles.cover}><View style={styles.coverIcon}><Feather name="eye-off" size={28} color={colors.text} /></View><Text style={styles.prompt}>{busy ? 'Opening…' : remaining === null ? 'Checking viewing time' : remaining <= 0 ? 'Time used up' : 'Hold to reveal'}</Text>
+          {!busy && remaining !== null && remaining > 0 && <Text style={styles.coverHint}>Release to hide</Text>}
+        </View> : null}
       </View>
     </View>
     <Text accessibilityLiveRegion="polite" style={styles.message}>{message}</Text>
@@ -398,9 +400,15 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
   </View>;
 }
 const styles = StyleSheet.create({
-  section: { gap: 14 }, budget: { textAlign: 'right', color: colors.text, fontSize: 16, fontVariant: ['tabular-nums'] },
-  card: { width: '100%', aspectRatio: 9 / 16, backgroundColor: colors.background, borderRadius: 20, overflow: 'hidden' },
-  cover: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: colors.elevated }, prompt: { color: colors.text, fontSize: 20, fontFamily: tokens.font.display },
+  section: { gap: 14 },
+  viewerHeader: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingBottom: 4 },
+  viewerLabel: { color: colors.muted, fontSize: 10, letterSpacing: 1.25, fontWeight: '600' },
+  budget: { color: colors.text, fontSize: 15, fontVariant: ['tabular-nums'] },
+  card: { width: '100%', aspectRatio: 9 / 16, backgroundColor: colors.background, borderRadius: 24, overflow: 'hidden' },
+  cover: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 20, backgroundColor: colors.elevated },
+  coverIcon: { width: 62, height: 62, borderRadius: 31, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, marginBottom: 8 },
+  prompt: { color: colors.text, fontSize: 21, textAlign: 'center', fontFamily: tokens.font.display },
+  coverHint: { color: colors.muted, fontSize: 13, textAlign: 'center' },
   message: { color: colors.text, textAlign: 'center', fontSize: 13 }, button: { minHeight: 50, borderRadius: 28, backgroundColor: colors.accent, padding: 16, alignItems: 'center' },
   buttonText: { color: colors.onAccent, fontWeight: '600' }, note: { color: colors.muted, fontSize: 11, lineHeight: 17 },
 });

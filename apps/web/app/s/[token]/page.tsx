@@ -15,20 +15,21 @@ export default async function SharedPage({ params }: { params: Promise<{ token: 
     return (
       <Shell viewer>
         <main id="main" className="viewer-main">
-          <div className="viewer-heading"><span className="sender">A moment shared with you.</span><span className="fixture-tag">Private link</span></div>
           <div className="viewer-layout">
-            <ProtectedViewer />
             <section className="viewer-copy" aria-labelledby="viewer-title">
-              <span className="eyebrow"><span className="tiny-star">✳</span> SMALL MOMENTS, SHARED</span>
-              <h1 id="viewer-title">Just a little<br />glimpse<span>.</span></h1>
-              <p className="viewer-lede">A moment, held for you.</p>
+              <span className="eyebrow">PRIVATE LINK</span>
+              <h1 id="viewer-title">Just for your eyes.</h1>
+              <p className="viewer-lede">Hold to reveal. Release to hide.</p>
+              <p className="viewer-claim">The first reveal claims this single-use link.</p>
+            </section>
+            <div className="viewer-stage"><ProtectedViewer /></div>
+            <section className="viewer-conditions" aria-label="Viewing rules">
               <div className="viewing-rules">
-                <p><Icon name="eye" /><span><strong>Hold to reveal.</strong><br />Release to hide the moment.</span></p>
-                <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong><br />Across holds, for one viewer.</span></p>
-                <p><Icon name="lock" /><span><strong>Only the first viewer.</strong><br />Revealing claims this link in this browser.</span></p>
+                <p><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong>Your remaining time continues across holds.</p>
+                <p><strong>One link. One viewer.</strong>Opening a preview does not claim the link. The first reveal binds it to the viewer’s browser.</p>
               </div>
               <p className="capture-note">Browser viewers may save or capture revealed content.</p>
-              <p className="sample-help">Keep using this browser to continue. Clearing its cookies loses access; it does not reopen the link for another viewer.</p>
+              <p className="capture-note">Keep using this browser to continue. Clearing its cookies loses access; it does not reopen the link for another viewer.</p>
             </section>
           </div>
         </main>
@@ -53,19 +54,17 @@ export default async function SharedPage({ params }: { params: Promise<{ token: 
   return (
     <Shell viewer>
       <main id="main" className="viewer-main">
-        <div className="viewer-heading">
-          <Link href="/u/demo" className="sender"><span className="avatar avatar-small" aria-hidden="true">m</span><span>A moment from <strong>Mika.</strong></span></Link>
-          <span className="fixture-tag">Demo viewer</span>
-        </div>
         <div className="viewer-layout">
-          <SampleReveal />
           <section className="viewer-copy" aria-labelledby="viewer-title">
-            <span className="eyebrow"><span className="tiny-star">✳</span> SMALL MOMENTS, SHARED</span>
-            <h1 id="viewer-title">Here for<br />a little while<span>.</span></h1>
-            <p className="viewer-lede">Some moments are made to be seen, then let go.</p>
+            <Link href="/u/demo" className="eyebrow viewer-sender">A moment from @mika.demo</Link>
+            <h1 id="viewer-title">Just for your eyes.</h1>
+            <p className="viewer-lede">Hold to reveal. Release to hide.</p>
+            <p className="viewer-claim">Local demo · Public illustration</p>
+          </section>
+          <div className="viewer-stage"><SampleReveal /></div>
+          <section className="viewer-conditions" aria-label="About the sample viewer">
             <div className="viewing-rules">
-              <p><Icon name="eye" /><span><strong>Hold to reveal.</strong><br />Release to hide the moment.</span></p>
-              <p><Icon name="clock" /><span><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong><br />Across holds, for one viewer.</span></p>
+              <p><strong>Up to {REVEAL_BUDGET_MS / 1000} seconds total.</strong>Your remaining time continues across holds.</p>
             </div>
             <details className="demo-details">
               <summary>About this demo<Icon name="arrow" /></summary>

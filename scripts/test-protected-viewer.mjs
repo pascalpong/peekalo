@@ -100,7 +100,7 @@ function harness(t, { lease, skew = 0, kind = 'photo', status } = {}) {
     react,
     'react/jsx-runtime': { jsx, jsxs: jsx },
     './fullscreen-reveal': { FullscreenReveal: Overlay },
-    './icons': { Icon: () => {} },
+    './icons': { BrandMark: () => {}, Icon: () => {} },
     './safety-report': { SafetyReport: () => {} },
     './protected-viewer.module.css': { default: {} },
   };
@@ -133,7 +133,7 @@ function harness(t, { lease, skew = 0, kind = 'photo', status } = {}) {
     tree = undefined;
   };
   t.after(unmount);
-  const surface = () => walk(tree, node => node.type === 'button' && node.props['aria-describedby'] === 'protected-instructions');
+  const surface = () => walk(tree, node => node.type === 'button' && node.props['aria-describedby']?.split(/\s+/).includes('protected-instructions'));
   const pointer = { isPrimary: true, button: 0, pointerId: 1, preventDefault() {}, currentTarget: {
     focus() {}, setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, right: 300, bottom: 540 }),
   } };

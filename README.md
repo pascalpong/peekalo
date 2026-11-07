@@ -23,7 +23,7 @@ Photos and videos originate only from the in-app camera; there are no gallery, p
 
 ## Prelaunch marketing site (MKT-01 / WEB-SPLIT-01)
 
-The `apps/site` homepage is Peekalo’s dark, responsive prelaunch landing page, separate from the product web app in `apps/web`. It uses an original ten-second Higgsfield/Wan 2.6 hero loop, with muted inline playback, pause/play control, poster fallback and reduced-motion/data-saver handling. Background video pauses off-screen or while the page is hidden. `/u/demo` and `/s/demo` belong to the product web app; the marketing site redirects those legacy paths to its configured product origin. The separate generated photo is identified as a local demo; its ten-second allowance persists across holds within that runtime and resets on reload. These marketing assets do not verify protected delivery or native privacy. Asset provenance, processing and exact generation prompts are in `apps/site/public/marketing/ASSETS.md`; bundled Bricolage Grotesque includes its SIL Open Font License.
+The `apps/site` homepage uses the Veil design, with a still frosted glass hero and an interactive sample reveal. The earlier ten-second brand film sits below the main experience with playback controls, poster fallback and reduced-motion handling. The sample uses a public generated photo and an independent opaque cover. Its ten-second allowance carries across holds and resets on reload. `/u/demo` and `/s/demo` belong to the product app in `apps/web`; the marketing site redirects legacy paths to its configured product origin. Asset provenance is in `apps/site/public/marketing/ASSETS.md`.
 
 Early-access collection is **closed by default**. The page shows “opens soon” and `POST /api/waitlist` returns a sanitized 503 until `WAITLIST_ENABLED=true` is explicitly configured. The waitlist migration is deployed, but do not enable collection until real Supabase POST/duplicate behavior is verified and a working private contact/removal route is included in `/privacy`. Branded email is selected after domain choice; no domain or contact mailbox has been provisioned yet. Opening collection does not send emails or provide unsubscribe delivery; connect that flow before sending updates.
 
@@ -50,7 +50,7 @@ The Node API and trusted Sharp/FFmpeg processing path are in `apps/web/lib/serve
 
 All three applications consume `@peekalo/design`; the two browser apps reuse `@peekalo/web-ui`. Update `@peekalo/design` semantic values to change the common palette/scale; keep native components and web CSS as platform adapters. Brand, component and product-language rules live in D-21 of `docs/DECISIONS.md`.
 
-D-22 uses one canonical logo geometry in `packages/design/src/brand-geometry.ts`: web renders the outlined SVG and native loads its bundled PNG densities. Headers, camera/account panels, footer, sample phone and reveal overlay use these adapters. Run `pnpm brand:generate` after editing shared logo geometry/colors and `pnpm brand:check` to verify the checked-in exports, including native launcher and web favicon. Launcher asset changes take effect in the next native build; header/logo artwork changes are bundled JavaScript/assets.
+The Veil lockup and mark come from the canonical masters in `packages/design/assets/brand/source/`. Both web apps and the native app use the shared artwork via their platform adapters. Run `pnpm brand:generate` to regenerate display densities, favicons and launcher assets, and `pnpm brand:check` to verify them. Launcher changes take effect in the next native build.
 
 ## Install and run
 

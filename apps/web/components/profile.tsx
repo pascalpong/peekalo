@@ -4,9 +4,9 @@ import { BrandMark, Icon } from "./icons";
 import { Shell } from "./shell";
 
 const moments = [
-  { number: "01", title: "The slow mornings", color: "peach" },
-  { number: "02", title: "Somewhere outside", color: "green" },
-  { number: "03", title: "After the rain", color: "blue" },
+  { number: "01", title: "The slow mornings" },
+  { number: "02", title: "Somewhere outside" },
+  { number: "03", title: "After the rain" },
 ];
 
 export function Profile() {
@@ -14,17 +14,14 @@ export function Profile() {
     <Shell>
       <main id="main" className="profile-main">
         <section className="profile-intro" aria-labelledby="profile-name">
-          <div className="intro-copy">
-            <span className="eyebrow"><span className="tiny-star">✳</span> A LITTLE WINDOW INTO</span>
-            <div className="profile-identity">
-              <div className="avatar" aria-hidden="true">m<span>✳</span></div>
-              <div><h1 id="profile-name">Mika<span className="name-dot">.</span></h1><p className="handle">@mika.demo <span className="fixture-tag">Sample profile</span></p></div>
-            </div>
-            <p className="profile-bio">Collecting the small things.<br />Leaving a little to the imagination.</p>
-          </div>
-          <div className="intro-aside">
-            <span className="scribble" aria-hidden="true">hello, curious you.</span>
-            <div className="peek-stamp" aria-hidden="true"><BrandMark /><span>THERE&apos;S MORE<br />TO THE MOMENT</span></div>
+          <BrandMark />
+          <span className="eyebrow">PUBLIC PROFILE · SAMPLE</span>
+          <h1 id="profile-name">A little corner<br />of Mika.</h1>
+          <p className="handle">@mika.demo</p>
+          <div className="profile-access">
+            <Icon name="lock" />
+            <h2>Moments are shared personally.</h2>
+            <p className="profile-bio">Real moments open through a personal invitation. Try the public sample to see how it works.</p>
           </div>
         </section>
 
@@ -35,14 +32,14 @@ export function Profile() {
           </div>
           <div className="moment-grid">
             {moments.map((moment) => (
-              <Link className={`moment-card preview-${moment.color}`} href="/s/demo" key={moment.number} aria-label={`Open shared-viewer demo: ${moment.title}`}>
+              <Link className="moment-card" href="/s/demo" key={moment.number} aria-label={`Open shared-viewer demo: ${moment.title}`}>
                 <span className="moment-top"><span>DEMO PHOTO</span><span>{moment.number}</span></span>
-                <span className="moment-center"><span className="peek-circle"><Icon name="eye" /></span><span>A little mystery.</span></span>
+                <span className="moment-center"><BrandMark /><span>Hidden by default.</span></span>
                 <span className="moment-bottom"><span>{moment.title}</span><span className="card-arrow"><Icon name="arrow" /></span></span>
               </Link>
             ))}
           </div>
-          <p className="fixture-caption">Illustrated sample moments. No personal photos are shown.</p>
+          <p className="fixture-caption">Sample cards open the same public illustration.</p>
         </section>
 
         <section className="how-strip" aria-labelledby="how-title">

@@ -277,12 +277,12 @@ export default function CameraScreen() {
       {reviewingVideo && active && focused && windowFocused && !sharing && video.video && <VideoReview key={video.video.uri} uri={video.video.uri} />}
     </View>
 
-    <View pointerEvents="none" style={[styles.logoPosition, { top: insets.top + 14, left: Math.max(insets.left, 24) }]}>
+    <View pointerEvents="none" style={[styles.cameraChrome, styles.logoPosition, { top: insets.top + 14, left: Math.max(insets.left, 24) }]}>
       <BrandLogo />
     </View>
 
     {reviewing ? <>
-      <View style={[styles.reviewBadge, { top: insets.top + 22, right: Math.max(insets.right, 24) }]}>
+      <View style={[styles.cameraChrome, styles.reviewBadge, { top: insets.top + 22, right: Math.max(insets.right, 24) }]}>
         <Text style={styles.badgeText}>{reviewingVideo ? 'REVIEW VIDEO' : 'REVIEW PHOTO'}</Text>
       </View>
       <View style={[styles.reviewControls, { bottom: controlsBottom }]}>
@@ -294,8 +294,8 @@ export default function CameraScreen() {
           <Pressable accessibilityRole="button" onPress={discard} style={styles.secondaryButton}>
             <Feather name="x" size={18} color="#fff" /><Text style={styles.lightButtonText}>Discard</Text>
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={discard} style={styles.primaryButton}>
-            <Feather name="rotate-ccw" size={18} color={colors.onAccent} /><Text style={styles.darkButtonText}>Retake</Text>
+          <Pressable accessibilityRole="button" onPress={discard} style={styles.secondaryButton}>
+            <Feather name="rotate-ccw" size={18} color={colors.text} /><Text style={styles.lightButtonText}>Retake</Text>
           </Pressable>
         </View>
       </View>
@@ -313,12 +313,12 @@ export default function CameraScreen() {
           <Text style={styles.darkButtonText}>Retry camera</Text>
         </Pressable>}
       </View>}
-      <View style={[styles.captureControls, { bottom: controlsBottom }]}>
-        <Text style={[styles.photoMode, video.status === 'recording' && styles.recordingMode]}>
-          {video.status === 'recording' ? `● ${elapsed.toFixed(1)} / 10s` : video.status === 'preparing' ? 'STARTING VIDEO…' : video.status === 'stopping' ? 'SAVING VIDEO…' : 'TAP PHOTO · HOLD VIDEO'}
-        </Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Switch camera" accessibilityState={{ disabled: !canCapture }} disabled={!canCapture}
+        style={[styles.cameraChrome, styles.flipButton, { top: insets.top + 9, right: Math.max(insets.right, 24) }]} onPress={() => { setReady(false); setFacing(current => current === 'back' ? 'front' : 'back'); }}>
+        <Feather name="refresh-cw" size={23} color="#fff" />
+      </Pressable>
+      <View style={[styles.captureControls, { bottom: controlsBottom + 50 }]}>
         <View style={styles.shutterRow}>
-          <View style={styles.controlSpacer} />
           <Pressable accessibilityRole="button" accessibilityLabel="Take photo or hold to record video" accessibilityHint="Tap for photo. Hold for video; release to stop. Maximum ten seconds."
             accessibilityState={{ disabled: !showCamera || capturing || (!ready && !videoBusy), busy: capturing || videoBusy }}
             disabled={!showCamera || capturing || (!ready && !videoBusy)} delayLongPress={300}
@@ -332,12 +332,14 @@ export default function CameraScreen() {
             onPressOut={() => { if (longPress.current) videoSession.release(); }}
             onPress={() => { if (!longPress.current) takePhoto(); }}
             style={({ pressed }) => [styles.shutter, !canCapture && !videoBusy && styles.disabledShutter, videoBusy && styles.videoShutter, pressed && styles.pressedShutter]}>
-            {capturing || video.status === 'preparing' || video.status === 'stopping' ? <ActivityIndicator color={colors.onAccent} accessibilityLabel="Preparing capture" /> : <View style={[styles.shutterCore, video.status === 'recording' && styles.recordingCore]} />}
+            {capturing || video.status === 'preparing' || video.status === 'stopping' ? <ActivityIndicator color={colors.text} accessibilityLabel="Preparing capture" /> : <View style={[styles.shutterCore, video.status === 'recording' && styles.recordingCore]} />}
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Switch camera" accessibilityState={{ disabled: !canCapture }} disabled={!canCapture}
-            style={styles.flipButton} onPress={() => { setReady(false); setFacing(current => current === 'back' ? 'front' : 'back'); }}>
-            <Feather name="refresh-cw" size={23} color="#fff" />
-          </Pressable>
+        </View>
+        <View pointerEvents="none" style={styles.captureCaption}>
+          <Text style={[styles.photoMode, video.status === 'recording' && styles.recordingMode]}>
+            {video.status === 'recording' ? `● ${elapsed.toFixed(1)} / 10s` : video.status === 'preparing' ? 'STARTING VIDEO…' : video.status === 'stopping' ? 'SAVING VIDEO…' : 'Tap for photo · Hold for video'}
+          </Text>
+          {video.status === 'idle' && <Text style={styles.captureLimit}>Up to 10 seconds</Text>}
         </View>
       </View>
     </>}
@@ -358,25 +360,27 @@ const styles = StyleSheet.create({
   recordingCore: { backgroundColor: '#FF5E63', width: 38, height: 38, borderRadius: 10 },
   recordingMode: { color: '#fff', backgroundColor: '#A6222CDD' },
   settingsText: { color: colors.accent, fontSize: 13, paddingTop: 12, fontWeight: '600' },
-  logoPosition: { position: 'absolute', zIndex: 2, backgroundColor: '#080a09b3', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10 },
+  cameraChrome: { backgroundColor: 'rgba(21, 22, 24, 0.85)', borderWidth: 1, borderColor: 'rgba(239, 239, 237, 0.26)' },
+  logoPosition: { position: 'absolute', zIndex: 2, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 12 },
   permissionState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, gap: 18 },
   cameraGlyph: { height: 76, width: 76, borderRadius: 38, backgroundColor: '#FFFFFF12', alignItems: 'center', justifyContent: 'center' },
   stateTitle: { fontSize: 22, fontFamily: tokens.font.display, color: colors.text, textAlign: 'center' },
   stateText: { fontSize: 14, lineHeight: 22, color: colors.muted, textAlign: 'center', maxWidth: 280 },
-  captureControls: { zIndex: 3, position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 15 },
-  photoMode: { color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 2, backgroundColor: '#00000066', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14 },
+  captureControls: { zIndex: 3, position: 'absolute', left: 24, right: 24, alignItems: 'center' },
+  captureCaption: { position: 'absolute', top: 81, left: 0, right: 0, alignItems: 'center', gap: 3 },
+  photoMode: { color: '#fff', fontSize: 12, fontWeight: '600', textAlign: 'center', backgroundColor: '#151618e6', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 14 },
+  captureLimit: { color: colors.text, fontSize: 11, backgroundColor: '#151618e6', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 10 },
   shutterRow: { width: '100%', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 36 },
-  controlSpacer: { width: 48 },
-  shutter: { width: 78, height: 78, borderRadius: 39, borderWidth: 3, borderColor: '#fff', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF25' },
-  shutterCore: { width: 62, height: 62, borderRadius: 31, backgroundColor: '#fff' },
+  shutter: { width: 74, height: 74, borderRadius: 37, borderWidth: 2, borderColor: colors.accent, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF25' },
+  shutterCore: { width: 58, height: 58, borderRadius: 29, backgroundColor: colors.accent },
   disabledShutter: { opacity: 0.4 },
   pressedShutter: { transform: [{ scale: 0.94 }] },
-  flipButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#00000066', alignItems: 'center', justifyContent: 'center' },
-  reviewBadge: { position: 'absolute', backgroundColor: '#00000066', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7 },
+  flipButton: { position: 'absolute', zIndex: 3, width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
+  reviewBadge: { position: 'absolute', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 7 },
   badgeText: { color: '#fff', fontSize: 9, letterSpacing: 1.1, fontWeight: '700' },
   reviewControls: { zIndex: 3, position: 'absolute', left: 24, right: 24, alignItems: 'center', gap: 18 },
   reviewHint: { color: '#fff', fontSize: 12, textAlign: 'center', backgroundColor: '#00000099', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
-  reviewActions: { flexDirection: 'row', gap: 12 },
+  reviewActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 },
   shareButton: { alignSelf: 'stretch', minHeight: 56 },
   primaryButton: { minHeight: 50, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28, backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
   secondaryButton: { minHeight: 50, paddingHorizontal: 24, paddingVertical: 14, borderRadius: 28, backgroundColor: '#00000099', borderWidth: 1, borderColor: '#FFFFFF80', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
