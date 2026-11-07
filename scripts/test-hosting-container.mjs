@@ -99,6 +99,7 @@ try {
   assert.equal(chunk.origin, base, 'The asset smoke never fetches an external origin');
   assert.equal((await request(chunk.href)).status, 200, 'Standalone static chunks are included');
   assert.equal((await request('/demo/morning-hidden.png')).status, 200, 'Public demo fixtures are included');
+  assert.equal((await request('/icon.png')).status, 200, 'Canonical Veil favicon is packaged');
   assert.equal(docker(['exec', container, 'id', '-u']), '1000', 'Server runs as the unprivileged node user');
   const inspectFiles = "const fs=require('node:fs');function scan(p){for(const f of fs.readdirSync(p,{withFileTypes:true})){if(f.name==='.env'||f.name.startsWith('.env.'))process.exit(1);if(f.isDirectory())scan(p+'/'+f.name)}}scan('/app')";
   docker(['exec', container, 'node', '-e', inspectFiles]);

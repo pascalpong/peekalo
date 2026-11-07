@@ -43,7 +43,7 @@ try {
   const chunk = new URL(script[1].replaceAll('&amp;', '&'), base);
   assert.equal(chunk.origin, base, 'The asset smoke never fetches an external origin');
   assert.equal((await request(chunk.href)).status, 200, 'Standalone static chunks are included');
-  for (const path of ['/marketing/a-little-mystery-poster.webp', '/marketing/little-moment.webp', '/previews/green.svg']) {
+  for (const path of ['/icon.png', '/marketing/veil-glass.webp', '/marketing/veil-moment.webp', '/marketing/a-little-mystery-poster.webp', '/marketing/little-moment.webp', '/previews/green.svg']) {
     assert.equal((await request(path)).status, 200, `Public marketing asset is packaged: ${path}`);
   }
   const video = await request('/marketing/a-little-mystery.mp4', { headers: { Range: 'bytes=0-31' } });
