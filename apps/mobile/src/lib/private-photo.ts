@@ -54,13 +54,15 @@ export function loadPrivatePhoto({ uri, authorization, expectedOrigin, signal }:
       const received = await response.blob() as NativeBlob;
       if (settled || signal.aborted) { close(received); finish(); return; }
       blob = received;
-      const length = response.headers.get('Content-Length');
+      const contentLength = response.headers.get('Content-Length');
+      const length = response.headers.get('X-Peekalo-Media-Length') ?? contentLength;
       const contentType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
       // Android RN's native networking Blob omits MIME metadata. Trust only
       // the already validated HTTP type, and reject a conflicting native type.
       const blobType = blob.type.split(';')[0].trim().toLowerCase();
       if (response.status !== 200 || (response.url && response.url !== url.toString()) || contentType !== 'image/jpeg' ||
-        !length || !/^[1-9]\d*$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length) > maximumBytes ||
+        !length || (contentLength !== null && contentLength !== length) ||
+        !/^[1-9]\d*$/.test(length) || !Number.isSafeInteger(Number(length)) || Number(length) > maximumBytes ||
         !Number.isSafeInteger(blob.size) || blob.size <= 0 || blob.size > maximumBytes || blob.size !== Number(length) ||
         (blobType !== '' && blobType !== 'image/jpeg')) throw failure();
       const bytes = blob.size;

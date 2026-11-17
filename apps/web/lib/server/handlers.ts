@@ -196,7 +196,10 @@ export const media = (leaseId: string) => endpoint(async request => {
   const current = await rpc<typeof item>('peekalo_media', { p_identity: identity, p_lease: uuid(leaseId) });
   if (current.path !== item.path || current.kind !== item.kind) throw new ApiError(404, 'unavailable');
   if (!cached) privateMediaCache.put(item.path, item.kind, Buffer.from(bytes));
-  const outputHeaders = new Headers({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Accept-Ranges': 'none', 'Content-Length': String(bytes.byteLength),
+  // Next.js strips transport framing headers from route responses. The native
+  // photo loader still needs the normalized byte count to validate the Blob.
+  const length = String(bytes.byteLength);
+  const outputHeaders = new Headers({ 'Cache-Control': 'private, no-store, max-age=0, no-transform', Pragma: 'no-cache', 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Accept-Ranges': 'none', 'Content-Length': length, 'X-Peekalo-Media-Length': length,
     'Server-Timing': `authorize;dur=${(authorizedAt - startedAt).toFixed(1)}, bytes;dur=${(loadedAt - authorizedAt).toFixed(1)}, recheck;dur=${(performance.now() - loadedAt).toFixed(1)}, private_cache;desc="${cached ? 'hit' : 'miss'}"` });
   return new Response(bytes, { status, headers: outputHeaders });
 });
@@ -279,11 +282,16 @@ async function videoResponse(request: Request, path: string, cached: Buffer | un
         if (request.signal.aborted || delivery.signal.aborted) throw new ApiError(404, 'unavailable');
         offset += bytes.byteLength; controller.enqueue(bytes);
         if (offset > end) controller.close();
-      } catch (error) { delivery.abort(); first = undefined; controller.error(error); }
+      } catch {
+        delivery.abort();
+        first = undefined;
+        // Once headers are sent, Next logs stream failures outside the API wrapper.
+        controller.error(new Error('private_media_interrupted'));
+      }
     },
     cancel() { delivery.abort(); first = undefined; },
   }, { highWaterMark: 0 });
-  const headers = new Headers({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'Content-Type': 'video/mp4',
+  const headers = new Headers({ 'Cache-Control': 'private, no-store, max-age=0, no-transform', Pragma: 'no-cache', 'Content-Type': 'video/mp4',
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin',
     'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1) });
   if (range) headers.set('Content-Range', `bytes ${start}-${end}/${total}`);

@@ -82,6 +82,7 @@ test('cached photo still requires both live authorizations before private bytes 
   const response = await f.request();
   assert.equal(response.status, 200);
   assert.equal(await response.text(), 'normalized fixture photo');
+  assert.equal(response.headers.get('x-peekalo-media-length'), String(Buffer.byteLength('normalized fixture photo')));
   assertPrivate(response);
   assert.deepEqual(f.events, ['authorize', 'cache-read', 'authorize']);
   assert.equal(f.requests.length, 0);
@@ -271,13 +272,13 @@ test('revocation during a later Storage chunk cannot deliver that chunk', async 
   let restricted = false;
   const bytes = Buffer.alloc(2 * MiB, 9);
   const f = fixture(t, { kind: 'video', authorize: (count, item) => {
-    if (restricted) throw new sharing.ApiError(404, 'unavailable');
+    if (restricted) throw new Error('private-upstream-detail');
     return item;
   }, storage: rangedStorage(bytes, offset => { if (offset > 0) restricted = true; }) });
   const response = await f.request({ Range: 'bytes=0-' });
   const reader = response.body.getReader();
   assert.equal((await reader.read()).value.length, MiB);
-  await assert.rejects(reader.read());
+  await assert.rejects(reader.read(), { message: 'private_media_interrupted' });
   assert.equal(f.requests.length, 2);
 });
 

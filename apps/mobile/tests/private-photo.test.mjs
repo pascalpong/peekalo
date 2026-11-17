@@ -216,11 +216,20 @@ for (const [name, patch] of [
   });
 }
 
+test('decodes a complete photo whose size is declared independently of transport framing', async () => {
+  const h = harness({ fetcher: reply => reply({ headers: new Headers({ 'Content-Type': 'image/jpeg', 'X-Peekalo-Media-Length': '3' }) }) });
+  const pending = h.load(); await flush();
+  h.readers[0].result = data;
+  h.readers[0].onload();
+  assert.equal(await pending, data);
+});
+
 for (const [name, response, blob] of [
   ['denied status', { status: 403 }], ['partial status', { status: 206 }],
   ['redirected response', { url: `${origin}/other` }],
   ['wrong MIME', { headers: new Headers({ 'Content-Type': 'image/png', 'Content-Length': '3' }) }],
   ['missing length', { headers: new Headers({ 'Content-Type': 'image/jpeg' }) }],
+  ['conflicting length headers', { headers: new Headers({ 'Content-Type': 'image/jpeg', 'Content-Length': '2', 'X-Peekalo-Media-Length': '3' }) }],
   ['invalid length', { headers: new Headers({ 'Content-Type': 'image/jpeg', 'Content-Length': 'NaN' }) }],
   ['oversized advertised body', { headers: new Headers({ 'Content-Type': 'image/jpeg', 'Content-Length': String(15 * 1024 * 1024 + 1) }) }],
   ['oversized actual body', {}, { size: 15 * 1024 * 1024 + 1 }],
