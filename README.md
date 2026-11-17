@@ -71,7 +71,7 @@ For the native app, install Xcode 26.2+ with an iOS simulator runtime and CocoaP
 pnpm ios
 ```
 
-Select an iPhone simulator when prompted, or pass its name/UDID with `pnpm ios --device <simulator>`. This runner builds Debug **simulator** binaries. It generates ignored iOS files, installs Pods, places Xcode build output and temporary downloads under ignored `.cache/`, then uses Expo to install the binary and start Metro. Physical-device/release builds are a later verification task using the Expo CLI and signing configuration.
+Select an iPhone simulator when prompted, or pass its name/UDID with `pnpm ios --device <simulator>`. This runner builds Debug **simulator** binaries. It generates ignored iOS files, installs Pods, places Xcode build output and temporary downloads under ignored `.cache/`, and enables Xcode's local ad-hoc simulator signing so Keychain/SecureStore receives simulator entitlements. It then uses Expo to install the binary and start Metro. Physical-device/release builds and Apple-provider authorization remain separate tasks using their real signing/provider configuration.
 
 After installing the development build, JavaScript-only changes need:
 
@@ -95,7 +95,7 @@ After installation, leave Metro running (`pnpm dev:mobile`). For a USB connectio
 
 ## Native tooling notes
 
-- Mobile is pinned to **Expo 55.0.31 / React Native 0.83.10** for the installed Xcode 26.2. Both browser apps use **Next.js 16.4.1**; all apps use **React 19.2.0** for compatible, consistent peer resolution.
+- Mobile is pinned to **Expo 55.0.31 / React Native 0.83.10** for the installed Xcode 26.2. Both browser apps use **Next.js 16.4.6**; all apps use **React 19.2.0** for compatible, consistent peer resolution.
 - A source-build setting in `app.json` avoids React Native's prebuilt-artifact file-URI failure when the checkout path contains spaces. This makes the first native build slower. [Expo build-properties documentation](https://docs.expo.dev/versions/v55.0.0/sdk/build-properties/)
 - CocoaPods can be installed normally with `brew install cocoapods`. On this Mac, the stalled Homebrew Ruby download was replaced with CocoaPods 1.17.0 in ignored `.cache/cocoapods`, using the existing Homebrew portable Ruby. The runner recognizes that optional local install; it is not an application dependency and is not committed.
 - Keep several GB free on the internal drive for Apple tooling, even with external build caches. The successful simulator build had over 5 GiB free. A local Expo config plugin fixes generated shell-script quoting for checkout paths containing spaces. See the build board for actual native evidence.
@@ -216,7 +216,7 @@ Source preparation only; actual rollout/schedule/alert/backup and capacity evide
 
 **Environment boundary:** the container preflight requires `PEEKALO_DEPLOYMENT=development|staging|production`, `PEEKALO_EXPECTED_BACKEND_ORIGIN` exactly matching the HTTPS `SUPABASE_URL`, and explicit `PEEKALO_SERVING_ENABLED=true`. Staging/production additionally require `PEEKALO_PRODUCTION_BACKEND_ORIGIN`; staging must differ and production must match. Development also refuses a known production origin. Use separate Supabase projects, Storage/Auth configuration, token secrets, service-role credentials, origins and monitor hooks; never copy production credentials/media into staging. No production project has been selected/provisioned. These operator assertions catch configuration drift, not dishonesty or a mislabeled unknown project. Keep external ingress closed and serving disabled during recovery; the maintenance command works while serving is disabled.
 
-**Abuse controls:** every wrapped API call admits through atomic PostgreSQL token buckets before its handler/body. Fixed classes separate ordinary API/media, uploads, account/privacy and safety work. Global buckets bound anonymous/credential rotation; HMAC credential/verified-account/signed-guest buckets bound identities without trusting forwarded-IP headers. Source-owned burst/refill values are in the migration; the upload identity policy allows burst six and refills one per ten seconds, with a separate global burst twenty/refill one per two seconds. Media supports playback ranges without changing authorizations or allowances. A 20,000-key ceiling, fifteen-minute idle expiry and bounded purge constrain cardinality; denied responses use private/no-store `429` and `Retry-After`. Database/migration failure denies `503`. This is application abuse resistance, not protection from volumetric attacks reaching the provider/database, unique-human identification or a substitute for a configured trusted ingress. Native Auth/SMTP endpoints also need their provider limits and operator oversight.
+**Abuse controls:** every wrapped API call admits through atomic PostgreSQL token buckets before its handler/body. Fixed classes separate ordinary API/media, uploads, account/privacy and safety work. Global buckets bound anonymous/credential rotation; HMAC credential/verified-account/signed-guest buckets bound identities without trusting forwarded-IP headers. Source-owned burst/refill values are in the migration; the upload identity policy allows burst six and refills one per ten seconds, with a separate global burst twenty/refill one per two seconds. Media supports playback ranges without changing authorizations or allowances. Video responses honor the complete requested range (including AVFoundation requests larger than 1 MiB), with <=1 MiB Storage reads/output chunks, a 30 MiB total bound and fresh lease/path/kind checks before and after each chunk. Revocation, expiry or cancellation stops the stream; successful responses supply the exact advertised range, while an authorization failure aborts delivery instead of silently shortening a successful response. A 20,000-key ceiling, fifteen-minute idle expiry and bounded purge constrain cardinality; denied responses use private/no-store `429` and `Retry-After`. Database/migration failure denies `503`. This is application abuse resistance, not protection from volumetric attacks reaching the provider/database, unique-human identification or a substitute for a configured trusted ingress. Native Auth/SMTP endpoints also need their provider limits and operator oversight.
 
 **Durable processing approach:** keep one admitted normalization request per process under measured Free resources. Request bytes remain ephemeral; upload attempts, admission limits and writer barriers are durable. A crash before Storage requires the owner to retry the same capture/idempotency key after expiry; this deliberately avoids retaining raw media in a new paid queue. Fenced attempts cannot publish over later retries. The worker fairly sweeps at most ten known posts and ten queued deletions per invocation, collects bounded paginated inventories before deletion, reauthorizes each exact candidate and verifies removal. It preserves published paths, current attempts, tombstones, claims and spent ledgers. Unknown paths/provider outcomes remain pending. Normal active writers retain their barriers and remain eligible for resweeps; stale/unmatched writers require reconciliation. `peekalo_reconcile_storage_writer(owner,attempt,true)` is owner/admin SQL only: first establish actual process termination and upstream settlement, fence the attempt, then run fresh maintenance. Age alone never proves settlement. A general autonomous durable media-processing queue is deferred until evidence justifies it; recovery currently requires a retained native capture/retry or a new capture if its cache is gone.
 
@@ -243,6 +243,37 @@ The helper uses the project-local CLI in `.cache/supabase-cli/supabase` when ava
 After setup and `pnpm build:web`, run `pnpm dev:web:local` and `pnpm dev:mobile:local --localhost` in separate terminals. Metro uses port 8083 because unrelated applications own 8081 and 8082. For Android USB testing, reverse ports 3101 (product), 55321 (local Auth/Storage) and 8083 (Metro) with adb; the local inbox stays on the Mac. The mobile launcher receives only a public API origin and a development-only local-testing flag, never server keys. The flag avoids Expo 55's development `.env.local` precedence overriding the shell API setting; release builds ignore it. Fully restart the app/Metro when switching account environments. Open the Mac inbox to confirm a new test account, then return to the app and sign in. `pnpm test:auth:local` repeats the generated-account integration checks. Local sharing links work only on this Mac or through configured USB reverses; they are not public links. Physical tests remain pending.
 
 For hosted Google or public sharing tests, stop local Metro and run `pnpm dev:mobile --port 8083 --localhost`; the ignored default mobile API origin points to `https://peekalo-dev.onrender.com`. Reverse only 8083 for Metro. Hosted accounts differ from local email-test accounts. Only the owner's Google sign-in has device evidence; the Google test-user list is not an application invite gate for basic identity scopes. Public email signup still needs SMTP. Native sign-in/capture-to-share on this new build is not yet verified.
+
+### iPhone simulator sharing checkpoint (generated local test input)
+
+Camera capture is deferred for this checkpoint. `SimulatorSharing` is available only with **both** explicit local-testing/fixture flags, in an iOS development simulator; physical devices, Android/web and release JavaScript cannot open it. Store configuration rejects the fixture flag. It loads fixed generated inputs from a loopback-only fixture server, with no gallery/file picker. The original camera screen remains the normal entry outside this checkpoint.
+
+Start `pnpm local:setup` and `pnpm build:web`. For this isolated generated-fixture run only, start the gateway with process-local synthetic policy configuration:
+
+```sh
+POLICY_PUBLISHED=true POLICY_OPERATOR_NAME='Generated simulator fixture operator only' POLICY_COUNTRIES=TH,TW POLICY_MINIMUM_AGE=18 SAFETY_SUPPORT_EMAIL=simulator-support@example.invalid SAFETY_CHILD_SAFETY_EMAIL=simulator-safety@example.invalid SAFETY_AGE_POLICY='Generated adult simulator fixtures only' pnpm dev:web:local
+```
+
+These settings describe test fixtures, not a real publisher, delivered mailbox, approved public policy or operational coverage. They never change hosted configuration. In separate terminals:
+
+```sh
+node scripts/dev-simulator-sharing.mjs prepare
+pnpm simulator:sharing
+EXPO_PUBLIC_PEEKALO_SIMULATOR_FIXTURES=true pnpm dev:mobile:local --localhost
+```
+
+Preparation preserves its private generated-account manifest under ignored `.cache/run04/simulator-sharing/`; rerunning preserves those accounts. It creates two **preconfirmed** fixture accounts and a separate local allowlisted reviewer, then approves only their generated usernames. It does not upload/approve moments, accept terms or create grants/leases. It does not verify native signup/email delivery. The fixture server serves only generated media and the two disposable account credentials over loopback, never server keys or reviewer credentials; stop it after inspection.
+
+Install/run the current Debug simulator binary using `pnpm ios --device <isolated-simulator-UDID> --no-bundler --port 8083`, then explicitly launch `com.peekalo.preview` and connect inside its development launcher to `http://127.0.0.1:8083`. Existing QA installations share the development URL scheme, so a scheme-only open can select the old QA app instead; preserve that app and use the exact bundle ID. Use **Use fixture sender**, open Profile/account to accept the local fixture policy, return to Camera, review the generated photo or six-second video and choose **Share this test moment**. Enter the printed recipient username. The existing native `ShareCapture` performs normal Auth/API upload/processing and will first stop at **waiting for safety review**. Inspect only this run's pending generated moment with the separate reviewer:
+
+```sh
+node scripts/dev-simulator-sharing.mjs status
+node scripts/dev-simulator-sharing.mjs review <post-id>
+# Inspect the downloaded generated JPEG or decoded video before this exact-ID approval:
+PEEKALO_REVIEWED_GENERATED_FIXTURE=<post-id> node scripts/dev-simulator-sharing.mjs approve <post-id>
+```
+
+Retry the same native send; it reuses the uploaded moment. Close sharing, discard the local test input, select **Use fixture recipient**, accept the local fixture policy in Profile/account, then open Inbox and accept the request. Reveal/release and later holds use the normal server ledger; do not reset exhausted allowances. Repeat with a fresh generated input for the other media kind. Profile retains normal owner revoke/delete and slot controls. Pending real/native results and actual evidence are on the build board; generated review alone is not native upload/send verification. Camera, physical-device privacy, hosted rollout and store/release evidence remain separate.
 
 ### Google sign-in
 
@@ -299,7 +330,7 @@ Verification after the gates above: use new designated disposable addresses only
 
 ## Container hosting — HOST-01
 
-The root `Dockerfile` packages the product web/API into one Node 24.14.1 container with Sharp, FFmpeg/FFprobe, H.264/AAC encoders and an unprivileged server process. Next.js standalone output includes the workspace dependencies, static chunks and public demo fixtures. Build from the repository root; `.dockerignore` excludes environment files, native projects, caches and unrelated workspace inputs. Supply backend credentials only at runtime. No persistent capture disk is required; media remains in private Supabase Storage.
+The root `Dockerfile` packages the product web/API into one Node 24.22.3 container with Sharp, FFmpeg/FFprobe, H.264/AAC encoders and an unprivileged server process. Next.js standalone output includes the workspace dependencies, static chunks and public demo fixtures. Build from the repository root; `.dockerignore` excludes environment files, native projects, caches and unrelated workspace inputs. Supply backend credentials only at runtime. No persistent capture disk is required; media remains in private Supabase Storage.
 
 ```sh
 docker build --tag peekalo-hosting:local .

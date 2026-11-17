@@ -1,5 +1,5 @@
 # Build from the repository root. No backend credentials are needed at build time.
-FROM node:24.14.1-bookworm-slim AS builder
+FROM node:24.22.3-bookworm-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install --global pnpm@11.25.0
@@ -25,7 +25,7 @@ RUN pnpm --filter @peekalo/web build \
     && mkdir -p apps/web/.next/standalone/apps/web/node_modules/@supabase \
     && cp -P apps/web/node_modules/@supabase/supabase-js apps/web/.next/standalone/apps/web/node_modules/@supabase/supabase-js
 
-FROM node:24.14.1-bookworm-slim AS runner
+FROM node:24.22.3-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000 \
     FFMPEG_PATH=/usr/bin/ffmpeg FFPROBE_PATH=/usr/bin/ffprobe

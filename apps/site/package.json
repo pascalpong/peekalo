@@ -14,12 +14,12 @@
     "@peekalo/design": "workspace:*",
     "@peekalo/reveal": "workspace:*",
     "@peekalo/web-ui": "workspace:*",
-    "next": "16.4.1",
+    "next": "16.4.6",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
   "devDependencies": {
-    "@next/eslint-plugin-next": "16.4.1",
+    "@next/eslint-plugin-next": "16.4.6",
     "@types/node": "24.10.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.3",

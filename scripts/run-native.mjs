@@ -45,7 +45,9 @@ try {
       '-workspace', resolve(root, 'apps/mobile/ios/Peekalo.xcworkspace'),
       '-scheme', 'Peekalo', '-configuration', 'Debug', '-sdk', 'iphonesimulator',
       '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', derived,
-      'CODE_SIGNING_ALLOWED=NO', '-quiet', 'build',
+      // Xcode must embed simulator entitlements for SecureStore/Keychain.
+      // An ad-hoc simulator signature uses no developer account/certificate.
+      'CODE_SIGNING_ALLOWED=YES', 'CODE_SIGN_IDENTITY=-', '-quiet', 'build',
     ]);
     args.unshift('--binary', resolve(derived, 'Build/Products/Debug-iphonesimulator/Peekalo.app'), '--no-install');
   }

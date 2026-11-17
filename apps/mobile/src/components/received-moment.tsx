@@ -214,7 +214,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       if (state !== 'active') { stop(); statusRequest.current?.abort(); statusTurn.current++; allowanceReady.current = false; setRemaining(null); }
       else if (alive) void refreshStatus();
     });
-    const blur = AppState.addEventListener('blur', stop);
+    const blur = Platform.OS === 'android' ? AppState.addEventListener('blur', stop) : null;
     return () => {
       alive = false;
       setup.abort();
@@ -224,7 +224,7 @@ export function ReceivedMoment({ postId, kind }: { postId: string; kind: 'photo'
       stop();
       identity.current = null;
       if (mounted.current) setProtectedScreen(false);
-      change.remove(); blur.remove();
+      change.remove(); blur?.remove();
       releaseProtection();
     };
   }, [refreshStatus, stop]));

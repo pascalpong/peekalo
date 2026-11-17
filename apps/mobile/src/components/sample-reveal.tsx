@@ -1,7 +1,7 @@
 import Feather from '@expo/vector-icons/Feather';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
-import { AppState, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { sampleReveal } from '../lib/sample-reveal';
 import { colors, tokens, typography } from './ui';
 
@@ -28,12 +28,12 @@ export function SampleReveal() {
       if (state !== 'active') stop();
       sampleReveal.setEnabled(state === 'active');
     });
-    const blur = AppState.addEventListener('blur', () => { stop(); sampleReveal.setEnabled(false); });
-    const focus = AppState.addEventListener('focus', () => sampleReveal.setEnabled(AppState.currentState === 'active'));
+    const blur = Platform.OS === 'android' ? AppState.addEventListener('blur', () => { stop(); sampleReveal.setEnabled(false); }) : null;
+    const focus = Platform.OS === 'android' ? AppState.addEventListener('focus', () => sampleReveal.setEnabled(AppState.currentState === 'active')) : null;
     return () => {
       stop();
       sampleReveal.setEnabled(false);
-      change.remove(); blur.remove(); focus.remove();
+      change.remove(); blur?.remove(); focus?.remove();
     };
   }, [stop]));
 

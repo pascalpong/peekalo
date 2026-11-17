@@ -53,7 +53,7 @@ test('preview/QA identifiers, invalid build numbers and env overrides fail witho
     ['PEEKALO_IOS_BUILD_NUMBER', '0'], ['PEEKALO_IOS_BUILD_NUMBER', '10000'],
     ['PEEKALO_ANDROID_VERSION_CODE', '1.5'], ['PEEKALO_ANDROID_VERSION_CODE', '2100000001'],
     ['PEEKALO_ANDROID_VERSION_CODE', '01'], ['PEEKALO_RELEASE_VERSION', '1.0.0-beta'],
-    ['EXPO_NO_DOTENV', '0'], ['EXPO_NO_CLIENT_ENV_VARS', '1'], ['EXPO_PUBLIC_PEEKALO_LOCAL_TESTING', 'false'],
+    ['EXPO_NO_DOTENV', '0'], ['EXPO_NO_CLIENT_ENV_VARS', '1'], ['EXPO_PUBLIC_PEEKALO_LOCAL_TESTING', 'false'], ['EXPO_PUBLIC_PEEKALO_SIMULATOR_FIXTURES', 'true'],
   ];
   for (const [key, value] of cases) assert.throws(() => configure({ ...fixture, [key]: value }), /Store configuration requires valid/);
 });

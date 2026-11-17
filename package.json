@@ -31,6 +31,7 @@
     "test:web-split": "node --test scripts/test-web-split.mjs",
     "test:uploads": "node --test scripts/test-upload-admission.mjs scripts/test-upload-ledger.mjs scripts/test-upload-handler.mjs scripts/test-backend-fetch.mjs scripts/test-media-processing.mjs",
     "test:delivery": "node --test scripts/test-private-media-cache.mjs scripts/test-media-delivery.mjs",
+    "simulator:sharing": "node scripts/dev-simulator-sharing.mjs start",
     "local:setup": "node scripts/dev-local-backend.mjs",
     "local:stop": "node scripts/dev-local-backend.mjs stop",
     "dev:web:local": "node scripts/dev-local-apps.mjs web",

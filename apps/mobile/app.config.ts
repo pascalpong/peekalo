@@ -47,7 +47,7 @@ function storeConfiguration(config: ExpoConfig): ExpoConfig {
   const env = process.env;
   const fail = (field: string): never => { throw new Error(`Store configuration requires valid ${field}; see docs/STORE_SUBMISSION.md.`); };
   if (env.EXPO_NO_DOTENV !== '1') fail('EXPO_NO_DOTENV=1');
-  if (env.EXPO_NO_CLIENT_ENV_VARS || env.EXPO_PUBLIC_PEEKALO_LOCAL_TESTING) fail('client environment without development overrides');
+  if (env.EXPO_NO_CLIENT_ENV_VARS || env.EXPO_PUBLIC_PEEKALO_LOCAL_TESTING || env.EXPO_PUBLIC_PEEKALO_SIMULATOR_FIXTURES) fail('client environment without development overrides');
   const origin = (value: string | undefined, field: string) => {
     let parsed: URL;
     try { parsed = new URL(authLinkOrigin(value ?? '')); } catch { return fail(field); }

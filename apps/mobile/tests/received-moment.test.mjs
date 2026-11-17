@@ -173,6 +173,8 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     for (const effect of effects) { const cleanup = effect(); if (cleanup) videoChild.passiveCleanups.push(cleanup); }
   };
   const AppState = { currentState: 'active', addEventListener(name, listener) {
+    // iOS RCTAppState rejects Android focus/blur events at runtime.
+    if (platform === 'ios') assert(['change', 'memoryWarning'].includes(name), `Unsupported iOS AppState event: ${name}`);
     const listeners = appListeners.get(name) ?? new Set(); listeners.add(listener); appListeners.set(name, listeners);
     return { remove: () => listeners.delete(listener) };
   } };
@@ -235,6 +237,7 @@ function harness(t, { request, skew = 0, signedIn = true, platform = 'android', 
     once() { const button = find(tree, node => node.type === 'Pressable' && node.props.onPress); if (!button.props.disabled) button.props.onPress(); },
     blur() { for (const callback of appListeners.get('blur') ?? []) callback(); },
     background() { AppState.currentState = 'background'; for (const callback of appListeners.get('change') ?? []) callback('background'); },
+    inactive() { AppState.currentState = 'inactive'; for (const callback of appListeners.get('change') ?? []) callback('inactive'); },
     account(id) { session = id ? { user: { id }, access_token: `fixture-token-${id === 'account-a' ? 'a' : 'b'}` } : null; for (const callback of subscribers) callback(session ? 'SIGNED_IN' : 'SIGNED_OUT', session); },
     image: () => find(tree, node => node.type === 'Image'),
     imageVisible: () => {
@@ -508,6 +511,14 @@ test('a deferred old protection acquisition cannot disable a newly focused recip
   h.unmount(); await flush();
   assert.deepEqual(events.map(event => event[0]), ['prevent', 'allow', 'prevent', 'allow']);
   assert.equal(keys.size, 0);
+});
+
+test('iOS inactive interruption hides a revealed photo using the supported change event', async t => {
+  const h = harness(t, { platform: 'ios' });
+  await h.ready(); h.press(); await flush();
+  assert(h.image());
+  h.inactive(); await flush();
+  assert.equal(h.imageVisible(), false, 'The iOS inactive change covers media without another lease or network reply');
 });
 
 test('iOS serializes old app-switcher cleanup before enabling the next focus', async t => {

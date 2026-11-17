@@ -67,7 +67,7 @@ function fixture(t, { kind = 'photo', path = 'fixture/attempt/photo.jpg', author
     assert(storage, 'Unexpected Storage access on a cache hit');
     return storage(url, init);
   });
-  const request = headers => handlers.media(leaseId)(new globalThis.Request(`https://app.invalid/api/view/media/${leaseId}`, { headers }));
+  const request = (headers, signal) => handlers.media(leaseId)(new globalThis.Request(`https://app.invalid/api/view/media/${leaseId}`, { headers, signal }));
   return { cache, events, requests, request, item };
 }
 function assertPrivate(response) {
@@ -153,41 +153,47 @@ test('revocation or expiry during Storage reading denies delivery and cannot pop
   }
 });
 
-test('cached video ranges are bounded to one MiB and report exact partial bytes', async t => {
+test('cached video honors the complete AVFoundation range using <=1 MiB authorized chunks', async t => {
   const video = Buffer.alloc(2 * MiB + 19);
   for (let i = 0; i < video.length; i++) video[i] = i % 251;
   for (const [range, start, end] of [
-    ['bytes=13-9999999', 13, MiB + 12],
-    ['bytes=1048576-', MiB, 2 * MiB - 1],
+    ['bytes=13-9999999', 13, video.length - 1],
+    ['bytes=1048576-', MiB, video.length - 1],
     ['bytes=2097152-', 2 * MiB, video.length - 1],
-    [undefined, 0, MiB - 1],
+    [undefined, 0, video.length - 1],
   ]) {
     const f = fixture(t, { kind: 'video', path: 'fixture/attempt/video.mp4' });
     f.cache.put(f.item.path, 'video', video);
     const response = await f.request({ Authorization: 'Bearer synthetic-account', ...(range ? { Range: range } : {}) });
-    assert.equal(response.status, 206);
+    assert.equal(response.status, range ? 206 : 200);
     assertPrivate(response);
-    assert.equal(response.headers.get('content-range'), `bytes ${start}-${end}/${video.length}`);
+    assert.equal(response.headers.get('content-range'), range ? `bytes ${start}-${end}/${video.length}` : null);
     assert.equal(Number(response.headers.get('content-length')), end - start + 1);
     assert.equal(response.headers.get('content-type'), 'video/mp4');
-    const bytes = Buffer.from(await response.arrayBuffer());
-    assert(bytes.length <= MiB);
+    const chunks = [], reader = response.body.getReader();
+    while (true) { const part = await reader.read(); if (part.done) break; assert(part.value.length <= MiB); chunks.push(Buffer.from(part.value)); }
+    const bytes = Buffer.concat(chunks);
     assert.deepEqual(bytes, video.subarray(start, end + 1));
-    assert.deepEqual(f.events, ['account', 'authorize', 'cache-read', 'authorize']);
+    assert.deepEqual(f.events.slice(0, 4), ['account', 'authorize', 'cache-read', 'authorize']);
+    assert.equal(f.events.filter(event => event === 'authorize').length, 2 + 2 * chunks.length);
   }
 });
 
-test('uncached video forwards a bounded range and repeats live authorization after Storage', async t => {
-  const bytes = Buffer.alloc(MiB, 7);
+test('uncached video fulfills the whole requested range through bounded Storage reads and live checks', async t => {
+  const bytes = Buffer.alloc(3 * MiB, 7);
   const f = fixture(t, { kind: 'video', path: 'fixture/attempt/video.mp4', storage: (url, init) => {
-    assert.equal(init.headers.get('Range'), `bytes=10-${MiB + 9}`);
-    return new globalThis.Response(bytes, { status: 206, headers: { 'Content-Range': `bytes 10-${MiB + 9}/${3 * MiB}` } });
+    const [, from, to] = new globalThis.Headers(init.headers).get('Range').match(/^bytes=(\d+)-(\d+)$/).map(Number);
+    assert(to - from + 1 <= MiB);
+    const end = Math.min(to, bytes.length - 1);
+    return new globalThis.Response(bytes.subarray(from, end + 1), { status: 206, headers: { 'Content-Range': `bytes ${from}-${end}/${bytes.length}` } });
   } });
   const response = await f.request({ Range: 'bytes=10-9999999' });
   assert.equal(response.status, 206);
-  assert.equal(response.headers.get('content-range'), `bytes 10-${MiB + 9}/${3 * MiB}`);
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
-  assert.deepEqual(f.events, ['authorize', 'cache-read', 'storage', 'authorize']);
+  assert.equal(response.headers.get('content-range'), `bytes 10-${bytes.length - 1}/${bytes.length}`);
+  assert.equal(Number(response.headers.get('content-length')), bytes.length - 10);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes.subarray(10));
+  assert.equal(f.requests.length, 3);
+  assert.equal(f.events.filter(event => event === 'authorize').length, 8);
   assert.equal(f.cache.get(f.item.path, 'video'), undefined, 'Partial video responses never become full cached objects');
 });
 
@@ -232,4 +238,117 @@ test('invalid or unsatisfiable cached ranges never return media bytes', async t 
     assert.deepEqual(await response.json(), { error: 'invalid_range' });
     assert.equal(f.requests.length, 0);
   }
+});
+
+function rangedStorage(bytes, onRead = () => {}) {
+  return (url, init) => {
+    const match = new globalThis.Headers(init.headers).get('Range').match(/^bytes=(\d+)-(\d+)$/);
+    const from = Number(match[1]), to = Math.min(Number(match[2]), bytes.length - 1);
+    onRead(from);
+    return new globalThis.Response(bytes.subarray(from, to + 1), { status: 206, headers: { 'Content-Range': `bytes ${from}-${to}/${bytes.length}` } });
+  };
+}
+
+test('video revocation/expiry between chunks stops both cached and Storage delivery', async t => {
+  for (const cached of [true, false]) for (const status of [404, 410]) {
+    let restricted = false;
+    const bytes = Buffer.alloc(2 * MiB + 9, 8);
+    const f = fixture(t, { kind: 'video', authorize: (count, item) => {
+      if (restricted) throw new sharing.ApiError(status, 'unavailable');
+      return item;
+    }, storage: rangedStorage(bytes) });
+    if (cached) f.cache.put(f.item.path, 'video', bytes);
+    const response = await f.request({ Range: 'bytes=0-' });
+    const reader = response.body.getReader();
+    assert.equal((await reader.read()).value.length, MiB);
+    restricted = true;
+    await assert.rejects(reader.read());
+    assert.equal(f.requests.length, cached ? 0 : 1, 'No further Storage IO follows restriction');
+  }
+});
+
+test('revocation during a later Storage chunk cannot deliver that chunk', async t => {
+  let restricted = false;
+  const bytes = Buffer.alloc(2 * MiB, 9);
+  const f = fixture(t, { kind: 'video', authorize: (count, item) => {
+    if (restricted) throw new sharing.ApiError(404, 'unavailable');
+    return item;
+  }, storage: rangedStorage(bytes, offset => { if (offset > 0) restricted = true; }) });
+  const response = await f.request({ Range: 'bytes=0-' });
+  const reader = response.body.getReader();
+  assert.equal((await reader.read()).value.length, MiB);
+  await assert.rejects(reader.read());
+  assert.equal(f.requests.length, 2);
+});
+
+test('video path/kind replacement between chunks invalidates the stream', async t => {
+  for (const change of ['path', 'kind']) {
+    let changed = false;
+    const f = fixture(t, { kind: 'video', authorize: (count, item) => changed ? { ...item, [change]: change === 'path' ? 'other/attempt.mp4' : 'photo' } : item });
+    f.cache.put(f.item.path, 'video', Buffer.alloc(2 * MiB, 8));
+    const reader = (await f.request({ Range: 'bytes=0-' })).body.getReader();
+    assert.equal((await reader.read()).value.length, MiB);
+    changed = true;
+    await assert.rejects(reader.read());
+  }
+});
+
+test('cancelling a video stream does not prefetch further chunks or authorizations', async t => {
+  const f = fixture(t, { kind: 'video', storage: rangedStorage(Buffer.alloc(3 * MiB, 1)) });
+  const reader = (await f.request({ Range: 'bytes=0-' })).body.getReader();
+  await reader.read();
+  const count = f.events.length;
+  await reader.cancel();
+  await new Promise(resolve => globalThis.setImmediate(resolve));
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.events.length, count);
+});
+
+test('invalid, oversized, ignored or overlong Storage ranges fail before private video delivery', async t => {
+  for (const [status, range, length] of [
+    [200, `bytes 0-${MiB - 1}/${2 * MiB}`, MiB],
+    [206, `bytes 1-${MiB}/${2 * MiB}`, MiB],
+    [206, `bytes 0-${MiB - 1}/${31 * MiB}`, MiB],
+    [206, `bytes 0-${MiB - 1}/${2 * MiB}`, MiB + 1],
+    [206, `bytes 0-${MiB - 1}/${2 * MiB}`, MiB - 1],
+  ]) {
+    const f = fixture(t, { kind: 'video', storage: () => new globalThis.Response(Buffer.alloc(length), { status, headers: { 'Content-Range': range } }) });
+    const response = await f.request({ Range: 'bytes=0-' });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'sharing_unavailable' });
+    assert.equal(f.cache.get(f.item.path, 'video'), undefined);
+  }
+});
+
+test('the initial video post-IO authorization denies before committing response headers', async t => {
+  for (const cached of [true, false]) {
+    const bytes = Buffer.alloc(2 * MiB, 1);
+    const f = fixture(t, { kind: 'video', storage: rangedStorage(bytes), authorize: (count, item) => {
+      if (count === 2) throw new sharing.ApiError(410, 'expired');
+      return item;
+    } });
+    if (cached) f.cache.put(f.item.path, 'video', bytes);
+    const response = await f.request({ Range: 'bytes=0-' });
+    assert.equal(response.status, 410);
+    assert.deepEqual(await response.json(), { error: 'expired' });
+  }
+});
+
+test('request abort during a pending video Storage read cancels IO and yields no chunk', async t => {
+  const cancel = new globalThis.AbortController();
+  let notify, aborted = false;
+  const started = new Promise(resolve => { notify = resolve; });
+  const f = fixture(t, { kind: 'video', storage: async (url, init) => {
+    if (f.requests.length === 1) return rangedStorage(Buffer.alloc(2 * MiB, 1))(url, init);
+    notify();
+    return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => { aborted = true; reject(new Error('cancelled fixture read')); }, { once: true }));
+  } });
+  const response = await f.request({ Range: 'bytes=0-' }, cancel.signal);
+  const reader = response.body.getReader();
+  assert.equal((await reader.read()).value.length, MiB);
+  const pending = reader.read();
+  await started; cancel.abort();
+  await assert.rejects(pending);
+  assert.equal(aborted, true);
+  assert.equal(f.requests.length, 2);
 });

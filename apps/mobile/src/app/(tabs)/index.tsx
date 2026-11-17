@@ -16,8 +16,19 @@ import { frame916 } from '../../lib/capture-framing';
 import { VideoReview } from '../../components/video-review';
 import { subscribeAccountDisabled } from '../../lib/account-lifecycle';
 import { ShareCapture } from '../../components/share-capture';
+import { allowSimulatorFixtures } from '../../lib/simulator-fixtures';
 
 export default function CameraScreen() {
+  if (__DEV__ && allowSimulatorFixtures(__DEV__, Platform.OS, isDevice, process.env.EXPO_PUBLIC_PEEKALO_LOCAL_TESTING, process.env.EXPO_PUBLIC_PEEKALO_SIMULATOR_FIXTURES)) {
+    // Metro removes this development-only branch from release JavaScript.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { SimulatorSharing } = require('../../components/simulator-sharing') as typeof import('../../components/simulator-sharing');
+    return <SimulatorSharing />;
+  }
+  return <CameraCaptureScreen />;
+}
+
+function CameraCaptureScreen() {
   const insets = useSafeAreaInsets();
   const window = useWindowDimensions();
   const frame = frame916(window.width, window.height);

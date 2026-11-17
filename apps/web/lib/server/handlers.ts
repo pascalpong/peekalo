@@ -169,53 +169,126 @@ export const media = (leaseId: string) => endpoint(async request => {
   const item = await rpc<{ path: string; kind: 'photo' | 'video'; expiresAt: string }>('peekalo_media', { p_identity: identity, p_lease: uuid(leaseId) });
   const authorizedAt = performance.now();
   const cached = privateMediaCache.get(item.path, item.kind);
-  let bytes: Uint8Array<ArrayBuffer>; let status = 200; let contentRange: string | null = null;
-  const range = request.headers.get('range');
-  let start = 0; let end = 1024 * 1024 - 1;
-  if (item.kind === 'video') {
-    if (range && !/^bytes=\d+-\d*$/.test(range)) throw new ApiError(416, 'invalid_range');
-    const match = range?.match(/^bytes=(\d+)-(\d*)$/);
-    start = Number(match?.[1] ?? 0);
-    const requestedEnd = match?.[2] ? Number(match[2]) : start + 1024 * 1024 - 1;
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || requestedEnd < start) throw new ApiError(416, 'invalid_range');
-    end = Math.min(requestedEnd, start + 1024 * 1024 - 1);
-  }
-  if (cached) {
-    if (item.kind === 'video') {
-      if (start >= cached.length) throw new ApiError(416, 'invalid_range');
-      end = Math.min(end, cached.length - 1);
-      bytes = new Uint8Array(cached.subarray(start, end + 1));
-      contentRange = `bytes ${start}-${end}/${cached.length}`;
-      status = 206;
-    } else bytes = new Uint8Array(cached);
-  } else {
+  if (item.kind === 'video') return videoResponse(request, item.path, cached, async () => {
+    const current = await rpc<typeof item>('peekalo_media', { p_identity: identity, p_lease: uuid(leaseId) });
+    if (current.path !== item.path || current.kind !== item.kind) throw new ApiError(404, 'unavailable');
+  });
+  let bytes: Uint8Array<ArrayBuffer>; let status = 200;
+  if (cached) bytes = new Uint8Array(cached);
+  else {
     const c = configuration();
     const headers = new Headers({ apikey: c.service, Authorization: `Bearer ${c.service}` });
-    if (item.kind === 'video') headers.set('Range', `bytes=${start}-${end}`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const upstream = await fetch(`${c.url}/storage/v1/object/authenticated/peekalo-captures/${item.path.split('/').map(encodeURIComponent).join('/')}`, { headers, cache: 'no-store', signal: controller.signal });
       if (!upstream.ok) throw new ApiError(upstream.status === 416 ? 416 : 404, 'unavailable');
       const length = Number(upstream.headers.get('content-length'));
-      const cap = item.kind === 'photo' ? 15 * 1024 * 1024 : 1024 * 1024;
+      const cap = 15 * 1024 * 1024;
       if (Number.isFinite(length) && length > cap) throw new ApiError(503, 'sharing_unavailable');
       bytes = new Uint8Array(await upstream.arrayBuffer());
       if (bytes.byteLength > cap) throw new ApiError(503, 'sharing_unavailable');
       status = upstream.status;
-      contentRange = upstream.headers.get('content-range');
     } finally { clearTimeout(timeout); }
   }
   const loadedAt = performance.now();
   // Even a server-private cache hit must recheck expiry/revocation before delivery.
   const current = await rpc<typeof item>('peekalo_media', { p_identity: identity, p_lease: uuid(leaseId) });
   if (current.path !== item.path || current.kind !== item.kind) throw new ApiError(404, 'unavailable');
-  if (!cached && item.kind === 'photo') privateMediaCache.put(item.path, item.kind, Buffer.from(bytes));
-  const outputHeaders = new Headers({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'Content-Type': item.kind === 'photo' ? 'image/jpeg' : 'video/mp4', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Accept-Ranges': item.kind === 'video' ? 'bytes' : 'none', 'Content-Length': String(bytes.byteLength),
+  if (!cached) privateMediaCache.put(item.path, item.kind, Buffer.from(bytes));
+  const outputHeaders = new Headers({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin', 'Accept-Ranges': 'none', 'Content-Length': String(bytes.byteLength),
     'Server-Timing': `authorize;dur=${(authorizedAt - startedAt).toFixed(1)}, bytes;dur=${(loadedAt - authorizedAt).toFixed(1)}, recheck;dur=${(performance.now() - loadedAt).toFixed(1)}, private_cache;desc="${cached ? 'hit' : 'miss'}"` });
-  if (contentRange) outputHeaders.set('Content-Range', contentRange);
   return new Response(bytes, { status, headers: outputHeaders });
 });
+
+// AVFoundation requires the complete range it requested, with matching headers.
+// Keep Storage reads/queued output at <=1 MiB and authorize every chunk before
+// AND after IO. A lease expiring/revocation/cancellation terminates the stream;
+// an already delivered chunk cannot be recalled. No grant/budget is cached.
+async function videoResponse(request: Request, path: string, cached: Buffer | undefined, authorize: () => Promise<void>) {
+  const chunkSize = 1024 * 1024;
+  const maxSize = 30 * chunkSize;
+  const range = request.headers.get('range');
+  if (range && !/^bytes=\d+-\d*$/.test(range)) throw new ApiError(416, 'invalid_range');
+  const match = range?.match(/^bytes=(\d+)-(\d*)$/);
+  const start = Number(match?.[1] ?? 0);
+  const requestedEnd = match?.[2] ? Number(match[2]) : Number.MAX_SAFE_INTEGER;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || requestedEnd < start) throw new ApiError(416, 'invalid_range');
+  const delivery = new AbortController();
+  let total = cached?.length;
+  async function readChunk(offset: number, end: number) {
+    if (request.signal.aborted || delivery.signal.aborted) throw new ApiError(404, 'unavailable');
+    if (cached) {
+      if (offset >= cached.length) throw new ApiError(416, 'invalid_range');
+      return new Uint8Array(cached.subarray(offset, Math.min(end + 1, cached.length)));
+    }
+    const c = configuration();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    request.signal.addEventListener('abort', abort, { once: true });
+    delivery.signal.addEventListener('abort', abort, { once: true });
+    const timeout = setTimeout(abort, 10_000);
+    if (request.signal.aborted || delivery.signal.aborted) controller.abort();
+    let upstream: Response | undefined;
+    try {
+      upstream = await fetch(`${c.url}/storage/v1/object/authenticated/peekalo-captures/${path.split('/').map(encodeURIComponent).join('/')}`, {
+        headers: { apikey: c.service, Authorization: `Bearer ${c.service}`, Range: `bytes=${offset}-${end}` }, cache: 'no-store', signal: controller.signal,
+      });
+      if (upstream.status === 416) throw new ApiError(416, 'invalid_range');
+      if (!upstream.ok) throw new ApiError(404, 'unavailable');
+      const parsed = upstream.headers.get('content-range')?.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+      const from = Number(parsed?.[1]), to = Number(parsed?.[2]), size = Number(parsed?.[3]);
+      if (upstream.status !== 206 || !parsed || ![from, to, size].every(Number.isSafeInteger) || from !== offset ||
+          size < 1 || size > maxSize || (total !== undefined && total !== size) || to !== Math.min(end, size - 1) || to < from || to - from + 1 > chunkSize) throw new ApiError(503, 'sharing_unavailable');
+      const length = to - from + 1;
+      if (upstream.headers.has('content-length') && Number(upstream.headers.get('content-length')) !== length) throw new ApiError(503, 'sharing_unavailable');
+      total = size;
+      const output = new Uint8Array(length);
+      const reader = upstream.body?.getReader();
+      if (!reader) throw new ApiError(503, 'sharing_unavailable');
+      let written = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          if (written + part.value.byteLength > length) throw new ApiError(503, 'sharing_unavailable');
+          output.set(part.value, written); written += part.value.byteLength;
+        }
+        if (written !== length) throw new ApiError(503, 'sharing_unavailable');
+      } finally { await reader.cancel().catch(() => {}); }
+      return output;
+    } finally {
+      clearTimeout(timeout);
+      request.signal.removeEventListener('abort', abort); delivery.signal.removeEventListener('abort', abort);
+      await upstream?.body?.cancel().catch(() => {});
+    }
+  }
+  if (total !== undefined && (total > maxSize || start >= total)) throw new ApiError(416, 'invalid_range');
+  let first: Uint8Array | undefined = await readChunk(start, Math.min(requestedEnd, start + chunkSize - 1));
+  await authorize(); // Fail with an ordinary HTTP error before committing headers.
+  const end = Math.min(requestedEnd, total! - 1);
+  let offset = start;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        if (request.signal.aborted || delivery.signal.aborted) throw new ApiError(404, 'unavailable');
+        await authorize();
+        const bytes = first ?? await readChunk(offset, Math.min(end, offset + chunkSize - 1));
+        first = undefined;
+        await authorize();
+        if (request.signal.aborted || delivery.signal.aborted) throw new ApiError(404, 'unavailable');
+        offset += bytes.byteLength; controller.enqueue(bytes);
+        if (offset > end) controller.close();
+      } catch (error) { delivery.abort(); first = undefined; controller.error(error); }
+    },
+    cancel() { delivery.abort(); first = undefined; },
+  }, { highWaterMark: 0 });
+  const headers = new Headers({ 'Cache-Control': 'private, no-store, max-age=0', Pragma: 'no-cache', 'Content-Type': 'video/mp4',
+    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Cross-Origin-Resource-Policy': 'same-origin',
+    'Accept-Ranges': 'bytes', 'Content-Length': String(end - start + 1) });
+  if (range) headers.set('Content-Range', `bytes ${start}-${end}/${total}`);
+  return new Response(stream, { status: range ? 206 : 200, headers });
+}
 
 export const revoke = (postId: string, direct = false) => endpoint(async request => {
   const owner = await account(request);

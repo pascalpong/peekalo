@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import ts from 'typescript';
 import { createPhotoSession } from '../src/lib/photo-session.ts';
 import { createVideoSession } from '../src/lib/video-session.ts';
+import { allowSimulatorFixtures } from '../src/lib/simulator-fixtures.ts';
 
 // Run the real screen/controllers with native adapters. Camera readiness and
 // recording completions are deliberate events, never assumed from rendering.
@@ -71,6 +72,8 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
   } };
   const render = () => {
     cursor = 0; tree = component();
+    // React evaluates the selected native screen beneath the development gate.
+    while (typeof tree?.type === 'function') tree = tree.type(tree.props);
     const camera = find(tree, node => node.type === 'CameraView');
     if (native && (!camera || camera.key !== native.key)) { cameraUnmounts++; native = null; }
     if (camera) {
@@ -111,9 +114,10 @@ function harness(t, { microphone = { granted: true, canAskAgain: true }, permiss
     '../../components/video-review': { VideoReview: 'VideoReview' },
     '../../lib/account-lifecycle': { subscribeAccountDisabled: listener => { accountDisabled = listener; return () => { accountDisabled = null; }; } },
     '../../components/share-capture': { ShareCapture: 'ShareCapture' },
+    '../../lib/simulator-fixtures': { allowSimulatorFixtures },
   };
   const exports = {};
-  vm.runInNewContext(source, { exports, setTimeout, clearTimeout, setInterval, clearInterval, performance, require: name => {
+  vm.runInNewContext(source, { exports, __DEV__: true, process: { env: {} }, setTimeout, clearTimeout, setInterval, clearInterval, performance, require: name => {
     assert(Object.hasOwn(imports, name), `Unexpected import ${name}`); return imports[name];
   } });
   component = exports.default; render();

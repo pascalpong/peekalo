@@ -1,6 +1,6 @@
 # Build from the repository root with -f apps/site/Dockerfile.
 # Marketing has no database credentials, media worker or private sharing routes.
-FROM node:24.14.1-bookworm-slim AS builder
+FROM node:24.22.3-bookworm-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install --global pnpm@11.25.0
@@ -19,7 +19,7 @@ COPY packages/design ./packages/design
 COPY packages/web-ui ./packages/web-ui
 RUN pnpm --filter @peekalo/site build
 
-FROM node:24.14.1-bookworm-slim AS runner
+FROM node:24.22.3-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 COPY --from=builder --chown=node:node /app/apps/site/.next/standalone ./
