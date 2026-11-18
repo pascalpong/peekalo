@@ -1,0 +1,28 @@
+{
+  "recipe": {
+    "generator": "ae03309d5c3282530d90e0724dca13c555e6d2054d3b6a91d3e73308672404ed",
+    "masters": {
+      "logo": "3ba38f08b91bc62e078e9ca7f87d852c9f0de52ae111cfde1223a07b2db6ad0f",
+      "mark": "9300875f750e1020ae1fe925146dbbae7037975ba790dae6426d1132fd898f5c"
+    },
+    "dimensions": {
+      "width": 126,
+      "height": 32,
+      "markWidth": 24,
+      "markHeight": 36
+    },
+    "background": "#151618"
+  },
+  "assets": {
+    "packages/design/assets/brand/logo.png": "dc1a756bf381291f3f09fdad2459d02e1e913a856b92ce62ba60218e14d0fcd7",
+    "packages/design/assets/brand/logo@2x.png": "cf239d0615536f6bd372d9ecb871f1a1256f6a2321962111ba4957efc93f544c",
+    "packages/design/assets/brand/logo@3x.png": "a303fe2432f68a7e52610e628db0e8c2c9e0a5949a8d07cf28faee399a701408",
+    "packages/design/assets/brand/mark.png": "8ecb4daf455d369f13cd5a7f246efe5d7efea413f506fd373501a97e1f9567d5",
+    "packages/design/assets/brand/mark@2x.png": "1d198981a1a6a7eb951b595b504d28a4494934d35822d5f493c4308f9eb53dd7",
+    "packages/design/assets/brand/mark@3x.png": "7551985863fb1051bf217436af2b57b3e8be15ee7c66f5618526242b61327ab7",
+    "apps/web/app/icon.png": "78e4499a060c84c05a2b05fc6efaa0684a051a60d7f088fd06912615d393cd1d",
+    "apps/site/app/icon.png": "78e4499a060c84c05a2b05fc6efaa0684a051a60d7f088fd06912615d393cd1d",
+    "apps/mobile/assets/icon.png": "05a84fb1a9e4ceb352ad41a49532c86c8d2c7ab96e8bbc485e5b8d09851a5cda",
+    "apps/mobile/assets/adaptive-icon.png": "13ffee6c8c0eae16c3b04107ea53b1dddf7483bd625e198b2826f83a59257f6d"
+  }
+}
